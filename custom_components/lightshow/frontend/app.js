@@ -440,9 +440,15 @@ class LightShowStudio {
           else if (p.state === "idle") stateLabel = "⏹ Zuletzt gespielt";
           else if (!hasTrack) stateLabel = "Bereit";
 
+          let typeBadge = p.is_mass ? "🎵 Music Assistant" : "🔊 HA Player";
+          const lowerName = (p.player_name || "").toLowerCase();
+          if (lowerName.includes("web") || lowerName.includes("device") || lowerName.includes("browser") || lowerName.includes("lokal") || lowerName.includes("sendspin")) {
+            typeBadge = "💻 Lokaler Player (MASS)";
+          }
+
           card.innerHTML = `
             <div class="active-info">
-              <span class="active-badge">⚡ ${p.player_name} (${stateLabel})</span>
+              <span class="active-badge">⚡ [${typeBadge}] ${p.player_name} (${stateLabel})</span>
               <strong>${songName}</strong>
               <span>${p.album ? 'Album: ' + p.album : (hasTrack ? 'Music Assistant Stream' : 'Keine aktuelle Wiedergabe')}${durBadge}</span>
             </div>

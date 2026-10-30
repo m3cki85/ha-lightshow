@@ -44,36 +44,123 @@ class MusicAssistantHelper:
         return None
 
     def get_mass_server_queues(self) -> List[Dict[str, Any]]:
-        """Retrieve all active queues from Music Assistant client."""
+        """Retrieve all active players and queues directly from Music Assistant client."""
         client = self._get_mass_client()
         if not client:
             return []
 
-        queues_data = []
-        try:
-            queues_controller = getattr(client, "player_queues", None)
-            if not queues_controller:
-                return []
+        results = []
+        seen_ids = set()
 
+        # 1. Inspect client.players (all registered players in Music Assistant)
+        players_controller = getattr(client, "players", None)
+        if players_controller:
+            raw_players = []
+            try:
+                if hasattr(players_controller, "all"):
+                    attr = getattr(players_controller, "all")
+                    raw_players = list(attr()) if callable(attr) else (list(attr.values()) if isinstance(attr, dict) else list(attr))
+                elif isinstance(players_controller, dict):
+                    raw_players = list(players_controller.values())
+                else:
+                    raw_players = list(players_controller)
+            except Exception as err:
+                _LOGGER.debug("Error retrieving client.players: %s", err)
+
+            for p in raw_players:
+                p_id = str(getattr(p, "player_id", "") or "")
+                if not p_id:
+                    continue
+                display_name = getattr(p, "display_name", "") or getattr(p, "name", p_id)
+                state = str(getattr(p, "state", "idle")).lower()
+
+                # Check current_media on player
+                cur_media = getattr(p, "current_media", None)
+                title = ""
+                artist = ""
+                album = ""
+                duration = 0.0
+                uri = ""
+                image = None
+
+                if cur_media:
+                    title = getattr(cur_media, "title", "") or getattr(cur_media, "name", "")
+                    artist = getattr(cur_media, "artist", "")
+                    album = getattr(cur_media, "album", "")
+                    duration = float(getattr(cur_media, "duration", 0) or 0)
+                    uri = getattr(cur_media, "uri", "")
+                    image = getattr(cur_media, "image_url", None) or getattr(cur_media, "image", None)
+
+                # Check player_queues for active item if not on player directly
+                if not title and hasattr(client, "player_queues"):
+                    q = None
+                    try:
+                        q_ctrl = client.player_queues
+                        active_source = getattr(p, "active_source", None) or p_id
+                        if hasattr(q_ctrl, "get"):
+                            q = q_ctrl.get(active_source) or q_ctrl.get(p_id)
+                        elif isinstance(q_ctrl, dict):
+                            q = q_ctrl.get(active_source) or q_ctrl.get(p_id)
+                    except Exception:
+                        pass
+
+                    if q and getattr(q, "current_item", None):
+                        c_item = q.current_item
+                        title = getattr(c_item, "name", "") or getattr(c_item, "title", "")
+                        artists = getattr(c_item, "artists", [])
+                        if isinstance(artists, list):
+                            artist = ", ".join(getattr(a, "name", str(a)) for a in artists)
+                        else:
+                            artist = str(artists)
+                        album_obj = getattr(c_item, "album", None)
+                        if album_obj:
+                            album = getattr(album_obj, "name", str(album_obj))
+                        duration = float(getattr(c_item, "duration", 0) or 0)
+                        uri = getattr(c_item, "uri", "")
+                        image = getattr(c_item, "image", None)
+
+                seen_ids.add(p_id)
+                seen_ids.add(display_name.lower())
+                entity_id = f"media_player.mass_{p_id}" if not str(p_id).startswith("media_player.") else p_id
+
+                results.append({
+                    "queue_id": p_id,
+                    "player_entity_id": entity_id,
+                    "player_name": display_name,
+                    "state": state,
+                    "title": title or "Bereit (Music Assistant)",
+                    "artist": artist,
+                    "album": album,
+                    "duration": duration,
+                    "media_content_id": uri or f"media-source://mass/player/{p_id}",
+                    "image": image,
+                    "has_track": bool(title),
+                    "is_mass": True,
+                })
+
+        # 2. Inspect client.player_queues (catch any standalone queues)
+        queues_controller = getattr(client, "player_queues", None)
+        if queues_controller:
             raw_queues = []
-            if hasattr(queues_controller, "all"):
-                all_attr = getattr(queues_controller, "all")
-                if not callable(all_attr):
-                    raw_queues = list(all_attr.values()) if isinstance(all_attr, dict) else list(all_attr)
-            elif hasattr(queues_controller, "queues"):
-                q_attr = getattr(queues_controller, "queues")
-                raw_queues = list(q_attr.values()) if isinstance(q_attr, dict) else list(q_attr)
-            elif isinstance(queues_controller, (dict, list)):
-                raw_queues = list(queues_controller.values()) if isinstance(queues_controller, dict) else list(queues_controller)
-            else:
-                try:
+            try:
+                if hasattr(queues_controller, "all"):
+                    attr = getattr(queues_controller, "all")
+                    raw_queues = list(attr()) if callable(attr) else (list(attr.values()) if isinstance(attr, dict) else list(attr))
+                elif isinstance(queues_controller, dict):
+                    raw_queues = list(queues_controller.values())
+                else:
                     raw_queues = list(queues_controller)
-                except Exception:
-                    pass
+            except Exception as err:
+                _LOGGER.debug("Error retrieving client.player_queues: %s", err)
 
             for q in raw_queues:
-                queue_id = getattr(q, "queue_id", None) or getattr(q, "player_id", "")
+                queue_id = str(getattr(q, "queue_id", None) or getattr(q, "player_id", "") or "")
                 display_name = getattr(q, "display_name", "") or getattr(q, "name", str(queue_id))
+                if not queue_id or queue_id in seen_ids or display_name.lower() in seen_ids:
+                    continue
+                seen_ids.add(queue_id)
+                seen_ids.add(display_name.lower())
+
                 current_item = getattr(q, "current_item", None)
                 state = str(getattr(q, "state", "idle")).lower()
 
@@ -85,7 +172,7 @@ class MusicAssistantHelper:
                 image = None
 
                 if current_item:
-                    title = getattr(current_item, "name", "")
+                    title = getattr(current_item, "name", "") or getattr(current_item, "title", "")
                     artists = getattr(current_item, "artists", [])
                     if isinstance(artists, list):
                         artist = ", ".join(getattr(a, "name", str(a)) for a in artists)
@@ -100,9 +187,10 @@ class MusicAssistantHelper:
                     uri = getattr(current_item, "uri", "")
                     image = getattr(current_item, "image", None)
 
-                queues_data.append({
+                entity_id = f"media_player.mass_{queue_id}" if not str(queue_id).startswith("media_player.") else queue_id
+                results.append({
                     "queue_id": queue_id,
-                    "player_entity_id": f"media_player.{queue_id}" if not str(queue_id).startswith("media_player.") else queue_id,
+                    "player_entity_id": entity_id,
                     "player_name": display_name or f"Music Assistant ({queue_id})",
                     "state": state,
                     "title": title or "Bereit (Music Assistant)",
@@ -114,15 +202,24 @@ class MusicAssistantHelper:
                     "has_track": bool(title),
                     "is_mass": True,
                 })
-        except Exception as err:
-            _LOGGER.debug("Error inspecting Music Assistant server queues: %s", err)
 
-        return queues_data
+        return results
 
     def get_players(self) -> List[Dict[str, Any]]:
         """Return all available media_player entities, prioritizing Music Assistant players."""
         players = []
         seen = set()
+
+        # 0. Entity registry lookup to reliably tag MASS players
+        mass_entity_ids = set()
+        try:
+            from homeassistant.helpers import entity_registry as er
+            ent_reg = er.async_get(self.hass)
+            for entity_id, reg_entry in ent_reg.entities.items():
+                if reg_entry.domain == "media_player" and reg_entry.platform in ("mass", "music_assistant"):
+                    mass_entity_ids.add(entity_id)
+        except Exception:
+            pass
 
         # 1. Native Music Assistant server players & queues
         for q in self.get_mass_server_queues():
@@ -146,7 +243,9 @@ class MusicAssistantHelper:
             friendly_name = attrs.get("friendly_name", entity_id)
 
             is_mass = False
-            if "mass_player_type" in attrs or "mass_player_id" in attrs:
+            if entity_id in mass_entity_ids:
+                is_mass = True
+            elif "mass_player_type" in attrs or "mass_player_id" in attrs:
                 is_mass = True
             elif attrs.get("app_name") == "Music Assistant":
                 is_mass = True
@@ -184,20 +283,24 @@ class MusicAssistantHelper:
     ) -> bool:
         """Start media playback on the specified player via MASS or media_player service."""
         try:
-            # If target media is explicitly MASS and music_assistant service exists
-            if media_id.startswith(("media-source://mass", "library://")) and self.hass.services.has_service("music_assistant", "play_media"):
-                await self.hass.services.async_call(
-                    "music_assistant",
-                    "play_media",
-                    {
-                        "entity_id": player_entity_id,
-                        "media_id": media_id,
-                        "media_type": media_type,
-                    },
-                    blocking=False,
-                )
-                _LOGGER.info("Called music_assistant.play_media for %s with %s", player_entity_id, media_id)
-                return True
+            # Check MASS service first if media or player is MASS
+            for s_domain in ("mass", "music_assistant"):
+                if self.hass.services.has_service(s_domain, "play_media"):
+                    try:
+                        await self.hass.services.async_call(
+                            s_domain,
+                            "play_media",
+                            {
+                                "entity_id": player_entity_id,
+                                "media_id": media_id,
+                                "media_type": media_type,
+                            },
+                            blocking=False,
+                        )
+                        _LOGGER.info("Called %s.play_media for %s with %s", s_domain, player_entity_id, media_id)
+                        return True
+                    except Exception as err:
+                        _LOGGER.debug("%s.play_media call failed: %s, trying next option", s_domain, err)
 
             # Universal standard media_player.play_media (works for Alexa / Echo Dot, Kiosk Assist, Cast, Sonos)
             await self.hass.services.async_call(
@@ -250,7 +353,18 @@ class MusicAssistantHelper:
         active = []
         seen_ids = set()
 
-        # 1. Native Music Assistant server queues (finds local player, web player, soundcard, etc.)
+        # 0. Entity registry lookup for MASS platform entities
+        mass_entity_ids = set()
+        try:
+            from homeassistant.helpers import entity_registry as er
+            ent_reg = er.async_get(self.hass)
+            for entity_id, reg_entry in ent_reg.entities.items():
+                if reg_entry.domain == "media_player" and reg_entry.platform in ("mass", "music_assistant"):
+                    mass_entity_ids.add(entity_id)
+        except Exception:
+            pass
+
+        # 1. Native Music Assistant server queues (finds local player, web player, soundcard, sendspin, etc.)
         for q in self.get_mass_server_queues():
             seen_ids.add(q["player_entity_id"])
             seen_ids.add(q["player_name"].lower())
@@ -263,7 +377,9 @@ class MusicAssistantHelper:
             friendly_name = attrs.get("friendly_name", state.entity_id)
 
             is_mass = False
-            if "mass_player_type" in attrs or "mass_player_id" in attrs:
+            if state.entity_id in mass_entity_ids:
+                is_mass = True
+            elif "mass_player_type" in attrs or "mass_player_id" in attrs:
                 is_mass = True
             elif attrs.get("app_name") == "Music Assistant":
                 is_mass = True
@@ -280,9 +396,10 @@ class MusicAssistantHelper:
             if not media_content_id:
                 media_content_id = f"media-source://mass/player/{state.entity_id}"
 
+            seen_ids.add(state.entity_id)
+            seen_ids.add(friendly_name.lower())
+
             if title:
-                seen_ids.add(state.entity_id)
-                seen_ids.add(friendly_name.lower())
                 active.append({
                     "player_entity_id": state.entity_id,
                     "player_name": friendly_name,
@@ -296,22 +413,20 @@ class MusicAssistantHelper:
                     "has_track": True,
                     "is_mass": is_mass,
                 })
-            elif is_mass or "device" in state.entity_id.lower() or "local" in state.entity_id.lower() or "chrome" in state.entity_id.lower():
-                # Always include Music Assistant and local player entities so user can select them!
-                seen_ids.add(state.entity_id)
-                seen_ids.add(friendly_name.lower())
+            else:
+                # Include all players so the user can always see and select their local or desired player!
                 active.append({
                     "player_entity_id": state.entity_id,
                     "player_name": friendly_name,
                     "state": state.state,
-                    "title": "Bereit (Music Assistant Player)",
+                    "title": "Bereit",
                     "artist": "",
                     "album": "",
                     "duration": 0.0,
                     "media_content_id": media_content_id,
                     "image": None,
                     "has_track": False,
-                    "is_mass": True,
+                    "is_mass": is_mass,
                 })
 
         # Sort priority: has_track first, then playing > paused > idle > other, and is_mass first
@@ -332,12 +447,13 @@ class MusicAssistantHelper:
 
         q = query.strip()
 
-        # 1. Native music_assistant.search action in Home Assistant
-        if self.hass.services.has_service("music_assistant", "search"):
+        # 1. Native search action in Home Assistant (supports mass and music_assistant domains)
+        search_domains = [d for d in ("mass", "music_assistant") if self.hass.services.has_service(d, "search")]
+        for s_domain in search_domains:
             for media_type_param in (["track"], "track"):
                 try:
                     res = await self.hass.services.async_call(
-                        domain="music_assistant",
+                        domain=s_domain,
                         service="search",
                         service_data={"name": q, "media_type": media_type_param, "limit": limit},
                         blocking=True,
@@ -396,10 +512,44 @@ class MusicAssistantHelper:
                                 })
 
                             if results:
-                                _LOGGER.info("music_assistant.search successfully returned %d tracks for '%s'", len(results), q)
+                                _LOGGER.info("%s.search successfully returned %d tracks for '%s'", s_domain, len(results), q)
                                 return results
                 except Exception as err:
-                    _LOGGER.debug("music_assistant.search attempt failed with param %s: %s", media_type_param, err)
+                    _LOGGER.debug("%s.search attempt failed with param %s: %s", s_domain, media_type_param, err)
+
+        # 1b. Direct Music Assistant client search
+        client = self._get_mass_client()
+        if not results and client and hasattr(client, "music") and hasattr(client.music, "search"):
+            try:
+                search_res = await client.music.search(search_query=q, media_types=["track"], limit=limit)
+                tracks = getattr(search_res, "tracks", []) if search_res else []
+                for item in tracks:
+                    artists = getattr(item, "artists", [])
+                    if isinstance(artists, list):
+                        artist_name = ", ".join(getattr(a, "name", str(a)) for a in artists)
+                    else:
+                        artist_name = str(artists)
+                    album_obj = getattr(item, "album", None)
+                    album_name = getattr(album_obj, "name", str(album_obj)) if album_obj else ""
+                    uri = getattr(item, "uri", "") or f"media-source://mass/track/{getattr(item, 'item_id', '')}"
+                    duration = getattr(item, "duration", 0)
+                    image = getattr(item, "image", None)
+                    results.append({
+                        "title": getattr(item, "name", "Unbekannter Titel"),
+                        "artist": artist_name,
+                        "album": album_name,
+                        "duration": float(duration) if duration else 0.0,
+                        "media_content_id": uri,
+                        "image": image,
+                        "can_play": True,
+                        "can_expand": False,
+                        "media_class": "track",
+                    })
+                if results:
+                    _LOGGER.info("client.music.search successfully returned %d tracks for '%s'", len(results), q)
+                    return results
+            except Exception as err:
+                _LOGGER.debug("client.music.search error: %s", err)
 
         # 2. Match from currently active tracks as quick fallback
         for a in self.get_active_tracks():
