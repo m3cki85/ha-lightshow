@@ -1,0 +1,38 @@
+play:
+  name: Play LightShow
+  description: Starts playing a saved lightshow sequence synchronized with audio.
+  fields:
+    show_id:
+      name: Show ID
+      description: The ID of the lightshow to play (e.g., halloween_party).
+      required: true
+      example: halloween_party
+      selector:
+        text:
+    player_entity_id:
+      name: Target Speaker / Player
+      description: Optional override for the Music Assistant or Home Assistant media player.
+      required: false
+      example: media_player.living_room_speaker
+      selector:
+        entity:
+          domain: media_player
+    loop:
+      name: Loop
+      description: Whether the show should loop continuously until stopped.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+stop:
+  name: Stop LightShow
+  description: Immediately stops the currently playing lightshow and turns off or fades out the show's lights.
+
+pause:
+  name: Pause LightShow
+  description: Pauses the currently playing lightshow and audio.
+
+resume:
+  name: Resume LightShow
+  description: Resumes a paused lightshow.

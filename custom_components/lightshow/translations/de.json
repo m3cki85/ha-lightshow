@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "LightShow Studio",
+        "description": "Möchtest du LightShow Studio aktivieren? Es wird ein neuer Menüpunkt in deiner Home Assistant Seitenleiste erstellt."
+      }
+    },
+    "abort": {
+      "already_configured": "LightShow Studio ist bereits eingerichtet."
+    }
+  }
+}

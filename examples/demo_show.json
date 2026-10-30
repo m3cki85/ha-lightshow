@@ -1,0 +1,91 @@
+{
+  "id": "demo_party_beat",
+  "name": "Demo Party Beat",
+  "description": "Beispiel-Lichtshow mit Fades für Zigbee und schnellen Farbwechseln/Effekten für WLED",
+  "duration": 45.0,
+  "audio": {
+    "title": "Party Beat Demo",
+    "filename": "demo_beat.mp3",
+    "stream_url": "/api/lightshow/audio/demo_beat.mp3",
+    "mass_uri": "",
+    "duration": 45.0
+  },
+  "settings": {
+    "default_player_entity_id": "media_player.living_room_speaker",
+    "loop": false,
+    "fade_out_on_stop": true
+  },
+  "tracks": [
+    {
+      "id": "track_wled_strip",
+      "entity_id": "light.wled",
+      "name": "WLED TV Strip",
+      "type": "wled",
+      "cues": [
+        {
+          "time": 0.0,
+          "state": "on",
+          "brightness": 255,
+          "rgb_color": [255, 0, 50],
+          "transition": 0.0,
+          "effect": "Fire 2012"
+        },
+        {
+          "time": 8.0,
+          "state": "on",
+          "brightness": 255,
+          "rgb_color": [0, 200, 255],
+          "transition": 0.0,
+          "effect": "Rainbow"
+        },
+        {
+          "time": 16.0,
+          "state": "on",
+          "brightness": 255,
+          "rgb_color": [255, 0, 255],
+          "transition": 0.0,
+          "effect": "Chase"
+        },
+        {
+          "time": 24.0,
+          "state": "off",
+          "transition": 1.0
+        }
+      ]
+    },
+    {
+      "id": "track_living_room_lamp",
+      "entity_id": "light.living_room_ceiling",
+      "name": "Wohnzimmer Deckenlampe (Zigbee)",
+      "type": "standard",
+      "cues": [
+        {
+          "time": 0.0,
+          "state": "on",
+          "brightness": 128,
+          "rgb_color": [255, 100, 0],
+          "transition": 2.0
+        },
+        {
+          "time": 8.0,
+          "state": "on",
+          "brightness": 255,
+          "rgb_color": [0, 100, 255],
+          "transition": 1.5
+        },
+        {
+          "time": 16.0,
+          "state": "on",
+          "brightness": 200,
+          "rgb_color": [255, 0, 150],
+          "transition": 1.0
+        },
+        {
+          "time": 24.0,
+          "state": "off",
+          "transition": 3.0
+        }
+      ]
+    }
+  ]
+}

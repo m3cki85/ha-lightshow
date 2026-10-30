@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LightShow Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app" class="studio-container">
+    <!-- Top Studio Header -->
+    <header class="studio-header">
+      <div class="logo-group">
+        <div class="logo-icon">✦</div>
+        <div class="logo-text">
+          <h1>LightShow Studio</h1>
+          <span class="sub">Music Assistant & Home Assistant Sequencer</span>
+        </div>
+      </div>
+
+      <div class="project-actions">
+        <select id="show-select" class="select-input">
+          <option value="">-- Show laden --</option>
+        </select>
+        <button id="btn-new-show" class="btn btn-secondary" title="Neue Show anlegen">+ Neu</button>
+        <button id="btn-save-show" class="btn btn-primary" title="Show in Home Assistant speichern">💾 Speichern</button>
+        <button id="btn-delete-show" class="btn btn-danger" title="Show löschen">🗑</button>
+      </div>
+
+      <div class="header-right">
+        <button id="btn-export-yaml" class="btn btn-accent">📋 In Automation nutzen</button>
+      </div>
+    </header>
+
+    <!-- Master Audio & Player Routing Bar -->
+    <section class="routing-bar">
+      <div class="routing-item">
+        <label for="audio-select">🎵 Audio-Quelle (Lokal / NAS):</label>
+        <div class="input-with-action">
+          <select id="audio-select" class="select-input">
+            <option value="">-- Keine Audiodatei gewählt --</option>
+          </select>
+          <label class="btn btn-small btn-secondary" title="Audiodatei (MP3/WAV) hochladen">
+            Upload
+            <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
+          </label>
+        </div>
+      </div>
+
+      <div class="routing-item">
+        <label for="player-select">🔊 Music Assistant Lautsprecher:</label>
+        <select id="player-select" class="select-input">
+          <option value="">-- Lautsprecher auswählen --</option>
+        </select>
+      </div>
+
+      <div class="routing-item playback-mode-group">
+        <label>Modus:</label>
+        <div class="toggle-group">
+          <button id="mode-browser" class="toggle-btn active" title="Audio im Browser abspielen (zum Editieren)">Studio (Browser)</button>
+          <button id="mode-speaker" class="toggle-btn" title="Audio auf echtem Smart-Speaker via Music Assistant ausgeben">Live (Lautsprecher)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Transport Control Bar -->
+    <section class="transport-bar">
+      <div class="transport-controls">
+        <button id="btn-rewind" class="transport-btn" title="Zum Anfang">⏮</button>
+        <button id="btn-play" class="transport-btn play-btn" title="Abspielen">▶</button>
+        <button id="btn-pause" class="transport-btn" title="Pausieren">⏸</button>
+        <button id="btn-stop" class="transport-btn" title="Stopp">⏹</button>
+        <button id="btn-loop" class="transport-btn toggle-btn" title="Endlosschleife (Loop)">🔁</button>
+      </div>
+
+      <div class="time-display">
+        <span id="time-current">00:00.000</span>
+        <span class="time-sep">/</span>
+        <span id="time-total">00:00.000</span>
+      </div>
+
+      <div class="timeline-tools">
+        <div class="tool-group">
+          <label>Snap:</label>
+          <select id="snap-select" class="select-input select-small">
+            <option value="0">Aus</option>
+            <option value="0.1">0.1 s</option>
+            <option value="0.25" selected>0.25 s (1/4)</option>
+            <option value="0.5">0.5 s (1/2)</option>
+            <option value="1.0">1.0 s</option>
+            <option value="2.0">2.0 s</option>
+          </select>
+        </div>
+
+        <div class="tool-group zoom-group">
+          <label>Zoom:</label>
+          <input type="range" id="zoom-slider" min="20" max="250" value="70" class="slider-input">
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Workspace: Audio Waveform & Multitrack Sequencer -->
+    <main class="sequencer-workspace">
+      <!-- Tracks Left Column (Headers) + Right Area (Timeline) -->
+      <div class="timeline-container" id="timeline-container">
+        
+        <!-- Audio Track Row -->
+        <div class="track-row audio-row">
+          <div class="track-header audio-header">
+            <div class="track-info">
+              <span class="track-icon">🎵</span>
+              <strong id="audio-title-display">Kein Audio geladen</strong>
+            </div>
+            <div class="track-controls">
+              <span id="audio-status-badge" class="badge">Keine Datei</span>
+            </div>
+          </div>
+          <div class="track-timeline audio-timeline" id="audio-timeline">
+            <canvas id="ruler-canvas" height="24"></canvas>
+            <canvas id="waveform-canvas" height="64"></canvas>
+            <div id="playhead-line" class="playhead"></div>
+          </div>
+        </div>
+
+        <!-- Dynamic Light Tracks Container -->
+        <div id="light-tracks-list">
+          <!-- Dynamically inserted light tracks go here -->
+        </div>
+
+      </div>
+
+      <!-- Add Track Button Bar -->
+      <div class="add-track-bar">
+        <button id="btn-add-light" class="btn btn-secondary">+ Lampe / WLED-Streifen hinzufügen</button>
+      </div>
+    </main>
+
+    <!-- Cue Inspector Modal / Panel -->
+    <div id="cue-inspector-modal" class="modal-overlay hidden">
+      <div class="modal-content inspector-card">
+        <div class="modal-header">
+          <h3 id="inspector-title">Cue bearbeiten</h3>
+          <button id="btn-close-inspector" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label>Zeitstempel (Sekunden):</label>
+            <input type="number" id="cue-time-input" step="0.05" min="0" class="number-input">
+          </div>
+
+          <div class="form-row">
+            <label>Zustand:</label>
+            <div class="toggle-group">
+              <button id="cue-state-on" class="toggle-btn active">AN</button>
+              <button id="cue-state-off" class="toggle-btn">AUS</button>
+            </div>
+          </div>
+
+          <div id="cue-properties-group">
+            <div class="form-row">
+              <label>Helligkeit: <span id="cue-brightness-val">100%</span></label>
+              <input type="range" id="cue-brightness-slider" min="1" max="255" value="255" class="slider-input">
+              <div class="quick-buttons">
+                <button class="btn btn-micro" data-val="64">25%</button>
+                <button class="btn btn-micro" data-val="128">50%</button>
+                <button class="btn btn-micro" data-val="191">75%</button>
+                <button class="btn btn-micro" data-val="255">100%</button>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label>Farbe:</label>
+              <div class="color-picker-row">
+                <input type="color" id="cue-color-picker" value="#ff0055" class="color-swatch">
+                <span id="cue-color-hex" class="mono-code">#ff0055</span>
+              </div>
+              <div class="palette-presets">
+                <span class="color-chip" data-color="#ff0033" style="background:#ff0033" title="Rot"></span>
+                <span class="color-chip" data-color="#ff6600" style="background:#ff6600" title="Orange"></span>
+                <span class="color-chip" data-color="#ffcc00" style="background:#ffcc00" title="Gelb"></span>
+                <span class="color-chip" data-color="#00ff66" style="background:#00ff66" title="Grün"></span>
+                <span class="color-chip" data-color="#00ffff" style="background:#00ffff" title="Cyan"></span>
+                <span class="color-chip" data-color="#0066ff" style="background:#0066ff" title="Blau"></span>
+                <span class="color-chip" data-color="#9900ff" style="background:#9900ff" title="Lila"></span>
+                <span class="color-chip" data-color="#ff00ff" style="background:#ff00ff" title="Pink"></span>
+                <span class="color-chip" data-color="#ffffff" style="background:#ffffff" title="Kaltweiß"></span>
+                <span class="color-chip" data-color="#ffdda0" style="background:#ffdda0" title="Warmweiß"></span>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <label>Übergangszeit (Fade in Sek.):</label>
+              <input type="number" id="cue-transition-input" step="0.1" min="0" max="10" value="0.0" class="number-input">
+              <small class="hint">Tipp: Für sanfte Fades bei Zigbee-Lampen 0.5s - 2.0s wählen.</small>
+            </div>
+
+            <div class="form-row" id="wled-effect-container">
+              <label>WLED Effekt:</label>
+              <select id="cue-effect-select" class="select-input">
+                <option value="">-- Kein Effekt (Vollfarbe) --</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-test-cue-live" class="btn btn-accent" title="Sendet diesen Cue sofort an die Lampe zum Anschauen">💡 Am Gerät testen</button>
+          <button id="btn-delete-cue" class="btn btn-danger">Löschen</button>
+          <button id="btn-save-cue" class="btn btn-primary">Übernehmen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Light Modal -->
+    <div id="add-light-modal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Lampe zum Sequencer hinzufügen</h3>
+          <button id="btn-close-add-light" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <input type="text" id="light-search-input" placeholder="Lichter durchsuchen..." class="text-input">
+          <div id="lights-picker-list" class="items-list">
+            <!-- Populated via API -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Export Automation Modal -->
+    <div id="export-modal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>In Home Assistant Automation nutzen</h3>
+          <button id="btn-close-export" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>Kopiere diesen YAML-Code direkt in eine Home-Assistant-Automation oder ein Skript:</p>
+          <pre id="export-yaml-code" class="code-block"></pre>
+          <button id="btn-copy-yaml" class="btn btn-primary">In die Zwischenablage kopieren</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden Audio Element for Browser Playback -->
+    <audio id="browser-audio-player" preload="auto"></audio>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
