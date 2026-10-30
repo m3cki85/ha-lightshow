@@ -4,7 +4,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.components import frontend
+from homeassistant.components import frontend, panel_custom
 
 from .const import (
     DOMAIN,
@@ -30,7 +30,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up via configuration.yaml (if used)."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Auto-import if 'lightshow:' exists in configuration.yaml
     if DOMAIN in config:
         hass.async_create_task(
             hass.config_entries.flow.async_init(
@@ -58,17 +57,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register HTTP and REST endpoints
     register_api_views(hass, storage, engine, mass_helper)
 
-    # Register Sidebar Panel correctly with hass as first argument
+    # Register Sidebar Panel via official panel_custom
     try:
-        frontend.async_register_built_in_panel(
-            hass,
-            component_name="iframe",
+        await panel_custom.async_register_panel(
+            hass=hass,
+            webcomponent_name="lightshow-panel",
+            frontend_url_path="lightshow",
             sidebar_title="LightShow",
             sidebar_icon="mdi:creation",
-            url_path="lightshow",
-            config={"url": "/api/lightshow/frontend/index.html"},
+            module_url="/api/lightshow/frontend/panel.js",
+            config={},
             require_admin=False,
-            update=True,
         )
         _LOGGER.info("Successfully registered LightShow Studio panel in Home Assistant sidebar")
     except Exception as err:
