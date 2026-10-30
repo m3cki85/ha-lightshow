@@ -1,9 +1,10 @@
 """LightShow Studio for Home Assistant."""
 
 import logging
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.components import frontend
 
 from .const import (
     DOMAIN,
@@ -28,6 +29,15 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up via configuration.yaml (if used)."""
     hass.data.setdefault(DOMAIN, {})
+
+    # Auto-import if 'lightshow:' exists in configuration.yaml
+    if DOMAIN in config:
+        hass.async_create_task(
+            hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": SOURCE_IMPORT}
+            )
+        )
+
     return True
 
 
@@ -48,19 +58,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Register HTTP and REST endpoints
     register_api_views(hass, storage, engine, mass_helper)
 
-    # Register Sidebar Panel
+    # Register Sidebar Panel correctly with hass as first argument
     try:
-        hass.components.frontend.async_register_built_in_panel(
+        frontend.async_register_built_in_panel(
+            hass,
             component_name="iframe",
             sidebar_title="LightShow",
             sidebar_icon="mdi:creation",
             url_path="lightshow",
             config={"url": "/api/lightshow/frontend/index.html"},
             require_admin=False,
+            update=True,
         )
-        _LOGGER.info("Registered LightShow Studio panel in Home Assistant sidebar")
+        _LOGGER.info("Successfully registered LightShow Studio panel in Home Assistant sidebar")
     except Exception as err:
-        _LOGGER.warning("Could not register sidebar panel: %s", err)
+        _LOGGER.error("Failed to register LightShow Studio sidebar panel: %s", err)
 
     # Register Services
     async def handle_play(call: ServiceCall) -> None:
@@ -90,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(DOMAIN, SERVICE_PAUSE, handle_pause)
     hass.services.async_register(DOMAIN, SERVICE_RESUME, handle_resume)
 
-    _LOGGER.info("LightShow Studio successfully initialized")
+    _LOGGER.info("LightShow Studio successfully initialized and ready")
     return True
 
 
@@ -102,7 +114,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await engine.async_stop()
 
     try:
-        hass.components.frontend.async_remove_panel("lightshow")
+        frontend.async_remove_panel(hass, "lightshow")
     except Exception:
         pass
 

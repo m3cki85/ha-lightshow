@@ -27,3 +27,11 @@ class LightShowConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title="LightShow Studio", data={})
 
         return self.async_show_form(step_id="user")
+
+    async def async_step_import(
+        self, import_config: Optional[Dict[str, Any]] = None
+    ) -> config_entries.ConfigFlowResult:
+        """Handle import from configuration.yaml."""
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(title="LightShow Studio", data={})
