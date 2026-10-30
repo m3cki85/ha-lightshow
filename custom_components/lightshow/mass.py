@@ -56,8 +56,8 @@ class MusicAssistantHelper:
     ) -> bool:
         """Start media playback on the specified player via MASS or media_player service."""
         try:
-            # Check if specialized music_assistant service exists
-            if self.hass.services.has_service("music_assistant", "play_media"):
+            # If target media is explicitly MASS and music_assistant service exists
+            if media_id.startswith(("media-source://mass", "library://")) and self.hass.services.has_service("music_assistant", "play_media"):
                 await self.hass.services.async_call(
                     "music_assistant",
                     "play_media",
@@ -71,14 +71,14 @@ class MusicAssistantHelper:
                 _LOGGER.info("Called music_assistant.play_media for %s with %s", player_entity_id, media_id)
                 return True
 
-            # Fallback to standard media_player.play_media
+            # Universal standard media_player.play_media (works for Alexa / Echo Dot, Kiosk Assist, Cast, Sonos)
             await self.hass.services.async_call(
                 "media_player",
                 "play_media",
                 {
                     "entity_id": player_entity_id,
                     "media_content_id": media_id,
-                    "media_content_type": media_type,
+                    "media_content_type": "music",
                 },
                 blocking=False,
             )

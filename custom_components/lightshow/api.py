@@ -220,6 +220,10 @@ class LightShowAudioStreamView(LightShowBaseView):
         content_type, _ = mimetypes.guess_type(filepath)
         return web.FileResponse(filepath, headers={"Content-Type": content_type or "audio/mpeg"})
 
+    async def delete(self, request: web.Request, filename: str) -> web.Response:
+        deleted = await self.storage.async_delete_audio_file(filename)
+        return self.json({"success": deleted})
+
 
 class LightShowControlView(LightShowBaseView):
     """Control engine playback and test cues live."""
@@ -236,6 +240,10 @@ class LightShowControlView(LightShowBaseView):
 
             if action == "play":
                 show_id = data.get("show_id")
+                show_data = data.get("show_data")
+                if show_data:
+                    show_id = await self.engine.storage.async_save_show(show_data)
+
                 player = data.get("player_entity_id")
                 start_time = float(data.get("start_time", 0.0))
                 loop = data.get("loop")
@@ -283,7 +291,16 @@ class LightShowMediaBrowseView(LightShowBaseView):
 
     async def get(self, request: web.Request) -> web.Response:
         uri = request.query.get("uri")
-        result = await self.mass.async_browse_media_source(uri)
+        if not uri or uri == "root":
+            # Fast-path: Return curated top-level hubs to prevent slow UPnP/DLNA full scan
+            mass_top = await self.mass.async_browse_media_source("media-source://mass")
+            if mass_top:
+                return self.json(mass_top)
+            # Fallback
+            result = await self.mass.async_browse_media_source(None)
+        else:
+            result = await self.mass.async_browse_media_source(uri)
+
         if result is None:
             return self.json({"error": "Failed to browse media source"}, status_code=400)
         return self.json(result)

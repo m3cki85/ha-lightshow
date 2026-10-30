@@ -149,3 +149,18 @@ class LightShowStorage:
         if os.path.isfile(path):
             return path
         return None
+
+    async def async_delete_audio_file(self, filename: str) -> bool:
+        """Delete an audio file from the audio directory."""
+        return await self.hass.async_add_executor_job(self._delete_audio_file_sync, filename)
+
+    def _delete_audio_file_sync(self, filename: str) -> bool:
+        filepath = self.get_audio_file_path(filename)
+        if filepath and os.path.isfile(filepath):
+            try:
+                os.remove(filepath)
+                _LOGGER.info("Deleted audio file '%s'", filename)
+                return True
+            except Exception as err:
+                _LOGGER.error("Failed to delete audio file %s: %s", filename, err)
+        return False

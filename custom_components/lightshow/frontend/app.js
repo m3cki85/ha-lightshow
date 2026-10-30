@@ -57,6 +57,14 @@ class LightShowStudio {
       playheadLine: document.getElementById("playhead-line"),
       lightTracksList: document.getElementById("light-tracks-list"),
       btnAddLight: document.getElementById("btn-add-light"),
+      btnAddCueAll: document.getElementById("btn-add-cue-all"),
+      btnOpenAudioManager: document.getElementById("btn-open-audio-manager"),
+      audioManagerModal: document.getElementById("audio-manager-modal"),
+      btnCloseAudioManager: document.getElementById("btn-close-audio-manager"),
+      btnCancelAudioManager: document.getElementById("btn-cancel-audio-manager"),
+      managerAudioFileInput: document.getElementById("manager-audio-file-input"),
+      audioFilesManagerList: document.getElementById("audio-files-manager-list"),
+      audioManagerStatus: document.getElementById("audio-manager-status"),
       audioPlayer: document.getElementById("browser-audio-player"),
       // Modals
       cueModal: document.getElementById("cue-inspector-modal"),
@@ -174,13 +182,27 @@ class LightShowStudio {
       if (e.target.value) this.loadShow(e.target.value);
     });
 
-    // Audio Select, Browse & Upload
+    // Audio Select, Browse, Upload & Manager
     this.dom.btnBrowseMedia.addEventListener("click", () => this.openMediaBrowser());
     this.dom.btnCloseMediaBrowser.addEventListener("click", () => this.dom.mediaModal.classList.add("hidden"));
     this.dom.btnCancelMediaBrowser.addEventListener("click", () => this.dom.mediaModal.classList.add("hidden"));
     this.dom.mediaSearchInput.addEventListener("input", (e) => this.filterMediaItems(e.target.value));
+
+    if (this.dom.btnOpenAudioManager) {
+      this.dom.btnOpenAudioManager.addEventListener("click", () => this.openAudioManager());
+      this.dom.btnCloseAudioManager.addEventListener("click", () => this.dom.audioManagerModal.classList.add("hidden"));
+      this.dom.btnCancelAudioManager.addEventListener("click", () => this.dom.audioManagerModal.classList.add("hidden"));
+      this.dom.managerAudioFileInput.addEventListener("change", (e) => this.handleAudioUploadFromManager(e.target.files[0]));
+    }
+
+    if (this.dom.btnAddCueAll) {
+      this.dom.btnAddCueAll.addEventListener("click", () => this.addCueToAllTracksAtCurrentTime());
+    }
+
     this.dom.audioSelect.addEventListener("change", (e) => this.handleAudioSelect(e.target.value));
-    this.dom.audioFileInput.addEventListener("change", (e) => this.handleAudioUpload(e.target.files[0]));
+    if (this.dom.audioFileInput) {
+      this.dom.audioFileInput.addEventListener("change", (e) => this.handleAudioUpload(e.target.files[0]));
+    }
 
     // Player Select
     this.dom.playerSelect.addEventListener("change", (e) => {
@@ -575,24 +597,29 @@ class LightShowStudio {
 
   drawWaveform(width) {
     const ctx = this.dom.waveformCanvas.getContext("2d");
-    const height = 64;
+    const height = 130;
     ctx.clearRect(0, 0, width, height);
 
     if (!this.audioBuffer) {
-      // Draw placeholder ambient wave
-      ctx.fillStyle = "#1e293b";
+      ctx.fillStyle = "#161b26";
       ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = "#334155";
-      ctx.font = "11px Inter";
-      ctx.fillText("Audiodatei oben auswählen für visuelle Audio-Wellenform", 20, 36);
+      ctx.fillStyle = "#64748b";
+      ctx.font = "13px Inter";
+      ctx.fillText("🎵 Wähle oben einen Song aus Music Assistant oder verwalte Uploads für die Wellenform", 24, 70);
       return;
     }
 
     const channelData = this.audioBuffer.getChannelData(0);
     const step = Math.ceil(channelData.length / width);
-    const amp = height / 2;
+    const mid = height / 2;
 
-    ctx.fillStyle = "#7928ca";
+    // Glowing neon gradient
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, "#00d2ff");
+    grad.addColorStop(0.5, "#9333ea");
+    grad.addColorStop(1, "#ff007f");
+    ctx.fillStyle = grad;
+
     for (let i = 0; i < width; i++) {
       let min = 1.0;
       let max = -1.0;
@@ -601,10 +628,19 @@ class LightShowStudio {
         if (datum < min) min = datum;
         if (datum > max) max = datum;
       }
-      const y1 = (1 + min) * amp;
-      const y2 = Math.max(1, (max - min) * amp);
-      ctx.fillRect(i, y1, 1, y2);
+      const top = mid - (max * mid * 0.95);
+      const bottom = mid - (min * mid * 0.95);
+      const barH = Math.max(2, bottom - top);
+      ctx.fillRect(i, top, 1.8, barH);
     }
+
+    // Midline
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(width, mid);
+    ctx.stroke();
   }
 
   renderLightTracks(timelineWidth) {
@@ -621,18 +657,52 @@ class LightShowStudio {
       const isWled = track.type === "wled";
       header.innerHTML = `
         <div>
-          <div class="track-title-row">
-            <span class="lamp-status-dot" id="dot-${track.id}"></span>
-            <span class="track-name" title="${track.name}">${track.name}</span>
+          <div class="track-header-top">
+            <div class="track-title-row">
+              <span class="lamp-status-dot" id="dot-${track.id}"></span>
+              <span class="track-name" title="${track.name}">${track.name}</span>
+            </div>
+            <button class="btn btn-micro btn-danger" title="Spur entfernen" data-action="del-track">✕</button>
           </div>
           <div class="track-badges">
             <span class="badge ${isWled ? 'badge-wled' : 'badge-zigbee'}">${isWled ? 'WLED' : 'Standard/Zigbee'}</span>
           </div>
-        </div>
-        <div class="track-actions">
-          <button class="btn btn-micro btn-danger" title="Spur entfernen" data-action="del-track">✕</button>
+          <div class="track-controls-bar">
+            <button class="btn-track-toggle" data-action="toggle-live" title="Lampe jetzt sofort an-/ausschalten">⏻ Schalten</button>
+            <button class="btn-track-cue" data-action="add-cue-cursor" title="Keyframe an Cursorposition einfügen">+ Cue (${this.currentTime.toFixed(1)}s)</button>
+          </div>
         </div>
       `;
+
+      // Live Toggle Action
+      header.querySelector('[data-action="toggle-live"]').addEventListener("click", async (e) => {
+        const btn = e.currentTarget;
+        const isCurrentlyOn = btn.classList.contains("on");
+        const nextState = isCurrentlyOn ? "off" : "on";
+        
+        btn.classList.toggle("on", nextState === "on");
+        const dot = document.getElementById(`dot-${track.id}`);
+        if (dot) dot.style.background = nextState === "on" ? "#10b981" : "#334155";
+
+        await fetch(`${this.apiBase}/control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "test_cue",
+            entity_id: track.entity_id,
+            cue: {
+              state: nextState,
+              brightness: 255,
+              rgb_color: [255, 255, 255]
+            }
+          })
+        });
+      });
+
+      // Add Cue at Cursor
+      header.querySelector('[data-action="add-cue-cursor"]').addEventListener("click", () => {
+        this.addCueToTrack(track.id, this.currentTime);
+      });
 
       header.querySelector('[data-action="del-track"]').addEventListener("click", () => {
         if (confirm(`Spur '${track.name}' entfernen?`)) {
@@ -645,9 +715,11 @@ class LightShowStudio {
       const lane = document.createElement("div");
       lane.className = "track-timeline light-timeline-lane";
       lane.style.width = `${timelineWidth}px`;
+      lane.title = "Klicken, um an dieser Stelle einen Keyframe (Cue) zu setzen";
 
       // Click on empty space to add Cue
-      lane.addEventListener("dblclick", (e) => {
+      lane.addEventListener("click", (e) => {
+        if (e.target.closest(".cue-block")) return;
         const rect = lane.getBoundingClientRect();
         const clickX = e.clientX - rect.left;
         let time = clickX / this.zoom;
@@ -933,13 +1005,33 @@ class LightShowStudio {
     }
   }
 
-  handleNewShow() {
+  async handleNewShow() {
     const name = prompt("Name der neuen Lichtshow:", "Meine neue Lightshow");
     if (!name) return;
+    const cleanId = name.toLowerCase().replace(/[^a-z0-9]/g, "_").replace(/^_+|_+$/g, "") || "show";
+    const uniqueId = `${cleanId}_${Date.now().toString().slice(-4)}`;
+
     this.currentShow = this.createDefaultShow();
     this.currentShow.name = name;
-    this.currentShow.id = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    this.renderShow();
+    this.currentShow.id = uniqueId;
+
+    try {
+      const res = await fetch(`${this.apiBase}/shows`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(this.currentShow),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await this.loadShowsList();
+        this.dom.showSelect.value = uniqueId;
+        this.renderShow();
+      } else {
+        alert("Konnte neue Show nicht speichern: " + data.error);
+      }
+    } catch (err) {
+      alert("Fehler beim Erstellen der neuen Show: " + err.message);
+    }
   }
 
   async handleSaveShow() {
@@ -1009,24 +1101,118 @@ data:
     }, 2000);
   }
 
+  // --- AUDIO MANAGER METHODS ---
+
+  openAudioManager() {
+    this.renderAudioManagerList();
+    this.dom.audioManagerModal.classList.remove("hidden");
+  }
+
+  renderAudioManagerList() {
+    this.dom.audioFilesManagerList.innerHTML = "";
+    if (this.audioFiles.length === 0) {
+      this.dom.audioFilesManagerList.innerHTML = `<div class="hint" style="text-align: center; padding: 20px;">Noch keine eigenen Audiodateien hochgeladen.</div>`;
+      return;
+    }
+
+    this.audioFiles.forEach(f => {
+      const row = document.createElement("div");
+      row.className = "item-row";
+      row.innerHTML = `
+        <div>
+          <strong>${f.filename}</strong>
+          <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">(${f.size_mb} MB)</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn btn-micro btn-secondary" data-action="preview" title="Im Browser vorhören">▶ Vorhören</button>
+          <button class="btn btn-micro btn-primary" data-action="select" title="Als Audio für die Show wählen">✓ Wählen</button>
+          <button class="btn btn-micro btn-danger" data-action="delete" title="Datei vom Server löschen">🗑</button>
+        </div>
+      `;
+
+      row.querySelector('[data-action="preview"]').addEventListener("click", () => {
+        this.dom.audioPlayer.src = f.url;
+        this.dom.audioPlayer.play().catch(e => console.warn(e));
+      });
+
+      row.querySelector('[data-action="select"]').addEventListener("click", () => {
+        this.handleAudioSelect(f.url);
+        this.dom.audioManagerModal.classList.add("hidden");
+      });
+
+      row.querySelector('[data-action="delete"]').addEventListener("click", async () => {
+        if (confirm(`Möchtest du "${f.filename}" wirklich dauerhaft vom Server löschen?`)) {
+          try {
+            const res = await fetch(`${this.apiBase}/audio/${encodeURIComponent(f.filename)}`, { method: "DELETE" });
+            const data = await res.json();
+            if (data.success) {
+              await this.loadAudioFiles();
+              this.renderAudioManagerList();
+            } else {
+              alert("Löschen fehlgeschlagen: " + data.error);
+            }
+          } catch (err) {
+            alert("Fehler beim Löschen: " + err.message);
+          }
+        }
+      });
+
+      this.dom.audioFilesManagerList.appendChild(row);
+    });
+  }
+
+  async handleAudioUploadFromManager(file) {
+    if (!file) return;
+    this.dom.audioManagerStatus.textContent = "Lade hoch...";
+    await this.handleAudioUpload(file);
+    this.dom.audioManagerStatus.textContent = "";
+    this.renderAudioManagerList();
+  }
+
+  addCueToAllTracksAtCurrentTime() {
+    if (this.currentShow.tracks.length === 0) {
+      alert("Füge zuerst mindestens eine Lampe über '+ Lampe hinzufügen' ein!");
+      return;
+    }
+    const t = parseFloat(this.currentTime.toFixed(2));
+    this.currentShow.tracks.forEach(track => {
+      this.addCueToTrack(track.id, t);
+    });
+  }
+
   // --- TRANSPORT & PLAYBACK LOOP ---
 
   async play() {
     if (this.isPlaying) return;
 
     if (this.playMode === "speaker") {
-      // Live via Home Assistant Backend & Music Assistant
-      await fetch(`${this.apiBase}/control`, {
+      const selectedPlayer = this.dom.playerSelect.value;
+      if (!selectedPlayer) {
+        alert("Bitte wähle oben einen Lautsprecher aus, bevor du die Live-Show startest!");
+        return;
+      }
+
+      this.currentShow.settings.default_player_entity_id = selectedPlayer;
+      this.currentShow.settings.loop = this.isLooping;
+
+      // Send show_data directly so playback works even with brand new/unsaved shows
+      const res = await fetch(`${this.apiBase}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "play",
           show_id: this.currentShow.id,
-          player_entity_id: this.dom.playerSelect.value,
+          show_data: this.currentShow,
+          player_entity_id: selectedPlayer,
           start_time: this.currentTime,
           loop: this.isLooping,
         }),
       });
+      const data = await res.json();
+      if (!data.success) {
+        alert("Fehler beim Starten der Live-Show: " + (data.error || "Unbekannter Fehler"));
+        return;
+      }
     } else {
       // Studio Browser Preview
       if (this.dom.audioPlayer.src) {

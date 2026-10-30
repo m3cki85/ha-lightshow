@@ -43,13 +43,12 @@
           <button id="btn-browse-media" class="btn btn-secondary" title="Song aus Music Assistant oder Mediathek wählen">
             🎵 Song aus Music Assistant / Mediathek wählen
           </button>
-          <select id="audio-select" class="select-input" style="max-width: 170px;" title="Bereits hochgeladene oder ausgewählte Dateien">
+          <button id="btn-open-audio-manager" class="btn btn-secondary" title="Hochgeladene Dateien verwalten und löschen">
+            📁 Uploads verwalten
+          </button>
+          <select id="audio-select" class="select-input" style="max-width: 170px;" title="Aktuell gewählte Datei">
             <option value="">-- Datei --</option>
           </select>
-          <label class="btn btn-small btn-secondary" title="Lokale Datei (MP3/WAV) hochladen">
-            Upload
-            <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
-          </label>
         </div>
       </div>
 
@@ -122,8 +121,8 @@
             </div>
           </div>
           <div class="track-timeline audio-timeline" id="audio-timeline">
-            <canvas id="ruler-canvas" height="24"></canvas>
-            <canvas id="waveform-canvas" height="64"></canvas>
+            <canvas id="ruler-canvas" height="28"></canvas>
+            <canvas id="waveform-canvas" height="130"></canvas>
             <div id="playhead-line" class="playhead"></div>
           </div>
         </div>
@@ -138,6 +137,7 @@
       <!-- Add Track Button Bar -->
       <div class="add-track-bar">
         <button id="btn-add-light" class="btn btn-secondary">+ Lampe / WLED-Streifen hinzufügen</button>
+        <button id="btn-add-cue-all" class="btn btn-accent" style="margin-left: 12px;" title="Fügt an der aktuellen Abspielposition für alle Lampen einen Keyframe ein">+ Cue an Cursor für alle Lampen</button>
       </div>
     </main>
 
@@ -213,6 +213,31 @@
           <button id="btn-test-cue-live" class="btn btn-accent" title="Sendet diesen Cue sofort an die Lampe zum Anschauen">💡 Am Gerät testen</button>
           <button id="btn-delete-cue" class="btn btn-danger">Löschen</button>
           <button id="btn-save-cue" class="btn btn-primary">Übernehmen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio Files Manager Modal -->
+    <div id="audio-manager-modal" class="modal-overlay hidden">
+      <div class="modal-content" style="width: 640px;">
+        <div class="modal-header">
+          <h3>📁 Hochgeladene Audiodateien verwalten</h3>
+          <button id="btn-close-audio-manager" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label class="btn btn-primary" style="cursor:pointer;">
+              ➕ Neue Audiodatei hochladen
+              <input type="file" id="manager-audio-file-input" accept="audio/*" style="display: none;">
+            </label>
+            <span id="audio-manager-status" class="hint"></span>
+          </div>
+          <div id="audio-files-manager-list" class="items-list" style="margin-top: 10px;">
+            <!-- Populated with audio files -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-audio-manager" class="btn btn-secondary">Schließen</button>
         </div>
       </div>
     </div>

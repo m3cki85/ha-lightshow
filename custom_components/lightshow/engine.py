@@ -220,6 +220,16 @@ class LightShowEngine:
             audio = self._current_show.get("audio", {})
             media_id = audio.get("mass_uri") or audio.get("stream_url")
             if media_id:
+                # Convert relative path to absolute HTTP URL for smart speakers (Echo Dot, Cast, Sonos)
+                if str(media_id).startswith("/"):
+                    try:
+                        from homeassistant.helpers.network import get_url
+                        base_url = get_url(self.hass, allow_internal=True, allow_ip=True)
+                        media_id = f"{base_url}{media_id}"
+                    except Exception as err:
+                        _LOGGER.warning("Could not determine base URL for speaker audio: %s", err)
+
+                _LOGGER.info("Starting audio playback on %s with: %s", self._player_entity_id, media_id)
                 await self.mass.async_play_media(self._player_entity_id, media_id)
 
         t_start = loop.time() - start_offset
