@@ -6,14 +6,12 @@ class LightShowPanel extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._iframe) {
+      // Natural responsive layout without absolute x=0 positioning to prevent overlap under HA sidebar
       this.style.display = "block";
       this.style.width = "100%";
       this.style.height = "100%";
-      this.style.position = "absolute";
-      this.style.top = "0";
-      this.style.left = "0";
-      this.style.right = "0";
-      this.style.bottom = "0";
+      this.style.position = "relative";
+      this.style.boxSizing = "border-box";
       this.style.overflow = "hidden";
       this.style.backgroundColor = "#0e1117";
 
@@ -23,6 +21,7 @@ class LightShowPanel extends HTMLElement {
       iframe.style.height = "100%";
       iframe.style.border = "none";
       iframe.style.display = "block";
+      iframe.style.boxSizing = "border-box";
       this.appendChild(iframe);
       this._iframe = iframe;
     }

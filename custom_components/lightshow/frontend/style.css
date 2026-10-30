@@ -412,30 +412,60 @@ html, body {
 
 .cue-block {
   position: absolute;
-  top: 10px;
-  height: 50px;
+  top: 9px;
+  height: 54px;
   border-radius: 6px;
-  padding: 4px 8px;
-  cursor: pointer;
+  padding: 0;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
   border: 1px solid rgba(255,255,255,0.25);
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  align-items: stretch;
   font-size: 11px;
-  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  transition: box-shadow 0.1s ease;
   overflow: hidden;
+  user-select: none;
 }
 
 .cue-block:hover {
-  transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(0,0,0,0.6);
   border-color: #fff;
+  z-index: 20;
+}
+
+.cue-block.dragging {
+  cursor: grabbing !important;
+  opacity: 0.85;
+  z-index: 50 !important;
+  box-shadow: 0 6px 20px rgba(0, 210, 255, 0.5) !important;
 }
 
 .cue-block.selected {
   outline: 2px solid #00d2ff;
-  box-shadow: 0 0 12px #00d2ffaa;
+  box-shadow: 0 0 14px #00d2ffaa;
+  z-index: 30;
+}
+
+.cue-drag-body {
+  flex: 1;
+  padding: 4px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.cue-resize-handle {
+  width: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: ew-resize;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.cue-resize-handle:hover, .cue-resize-handle.resizing {
+  background: rgba(0, 210, 255, 0.8) !important;
 }
 
 .cue-off {

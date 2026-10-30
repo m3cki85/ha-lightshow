@@ -70,6 +70,7 @@ class LightShowStudio {
       cueModal: document.getElementById("cue-inspector-modal"),
       btnCloseInspector: document.getElementById("btn-close-inspector"),
       cueTimeInput: document.getElementById("cue-time-input"),
+      cueDurationInput: document.getElementById("cue-duration-input"),
       cueStateOn: document.getElementById("cue-state-on"),
       cueStateOff: document.getElementById("cue-state-off"),
       cuePropertiesGroup: document.getElementById("cue-properties-group"),
@@ -226,11 +227,19 @@ class LightShowStudio {
     });
     
     // Quick brightness buttons
-    document.querySelectorAll(".quick-buttons button").forEach(btn => {
+    document.querySelectorAll(".quick-buttons button[data-val]").forEach(btn => {
       btn.addEventListener("click", () => {
         const val = btn.getAttribute("data-val");
         this.dom.cueBrightnessSlider.value = val;
         this.dom.cueBrightnessVal.textContent = `${Math.round((val / 255) * 100)}%`;
+      });
+    });
+
+    // Quick duration buttons
+    document.querySelectorAll(".quick-buttons .btn-dur").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const dur = btn.getAttribute("data-dur");
+        if (this.dom.cueDurationInput) this.dom.cueDurationInput.value = dur;
       });
     });
 
@@ -729,34 +738,118 @@ class LightShowStudio {
         this.addCueToTrack(track.id, time);
       });
 
-      // Render Cues
+      // Render Cues with Drag-to-Move and Drag-to-Resize
       track.cues.forEach((cue, cueIdx) => {
         const cueEl = document.createElement("div");
         cueEl.className = "cue-block";
         if (cue.state === "off") cueEl.classList.add("cue-off");
 
         const leftPx = cue.time * this.zoom;
-        const widthPx = Math.max(34, (cue.transition || 0.4) * this.zoom);
+        const dur = cue.duration !== undefined ? cue.duration : 2.0;
+        const widthPx = Math.max(28, dur * this.zoom);
         cueEl.style.left = `${leftPx}px`;
         cueEl.style.width = `${widthPx}px`;
 
         if (cue.state !== "off" && cue.rgb_color) {
           const [r, g, b] = cue.rgb_color;
           cueEl.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
-          // Adaptive text color
           const lum = (0.299 * r + 0.587 * g + 0.114 * b);
           cueEl.style.color = lum > 140 ? "#000" : "#fff";
         }
 
         const labelText = cue.state === "off" ? "AUS" : (cue.effect || `${Math.round((cue.brightness || 255) / 2.55)}%`);
         cueEl.innerHTML = `
-          <span class="cue-label">${labelText}</span>
-          <span class="cue-sub">${cue.time.toFixed(2)}s</span>
+          <div class="cue-drag-body" title="Gedrückt halten und ziehen zum Verschieben">
+            <span class="cue-label">${labelText}</span>
+            <span class="cue-sub">${cue.time.toFixed(2)}s | ${dur.toFixed(1)}s an</span>
+          </div>
+          <div class="cue-resize-handle" title="Rechten Rand ziehen, um Leuchtdauer zu verändern"></div>
         `;
 
-        cueEl.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.openInspector(track.id, cueIdx);
+        // Interactive Drag to Move
+        const dragBody = cueEl.querySelector(".cue-drag-body");
+        let startX = 0;
+        let origTime = cue.time;
+        let hasMoved = false;
+
+        const onMouseMove = (moveEvent) => {
+          const deltaX = moveEvent.clientX - startX;
+          if (Math.abs(deltaX) > 3) hasMoved = true;
+          if (!hasMoved) return;
+
+          cueEl.classList.add("dragging");
+          let newTime = Math.max(0, origTime + deltaX / this.zoom);
+          if (this.snap > 0) {
+            newTime = Math.round(newTime / this.snap) * this.snap;
+          }
+          newTime = Math.max(0, parseFloat(newTime.toFixed(2)));
+          cue.time = newTime;
+          cueEl.style.left = `${newTime * this.zoom}px`;
+          const sub = cueEl.querySelector(".cue-sub");
+          if (sub) sub.textContent = `${newTime.toFixed(2)}s | ${(cue.duration || 2.0).toFixed(1)}s an`;
+        };
+
+        const onMouseUp = () => {
+          window.removeEventListener("mousemove", onMouseMove);
+          window.removeEventListener("mouseup", onMouseUp);
+          cueEl.classList.remove("dragging");
+
+          if (hasMoved) {
+            track.cues.sort((a, b) => a.time - b.time);
+            this.renderTimeline();
+          } else {
+            // Click without drag -> open inspector
+            this.openInspector(track.id, cueIdx);
+          }
+        };
+
+        dragBody.addEventListener("mousedown", (downEvent) => {
+          if (downEvent.button !== 0) return;
+          downEvent.stopPropagation();
+          startX = downEvent.clientX;
+          origTime = cue.time;
+          hasMoved = false;
+
+          window.addEventListener("mousemove", onMouseMove);
+          window.addEventListener("mouseup", onMouseUp);
+        });
+
+        // Interactive Drag to Resize Duration
+        const resizeHandle = cueEl.querySelector(".cue-resize-handle");
+        let resizeStartX = 0;
+        let origDuration = dur;
+
+        const onResizeMove = (moveEvent) => {
+          const deltaX = moveEvent.clientX - resizeStartX;
+          let newDuration = origDuration + deltaX / this.zoom;
+          if (this.snap > 0) {
+            newDuration = Math.round(newDuration / this.snap) * this.snap;
+          }
+          newDuration = Math.max(0.2, parseFloat(newDuration.toFixed(2)));
+          cue.duration = newDuration;
+          const newWidthPx = Math.max(24, newDuration * this.zoom);
+          cueEl.style.width = `${newWidthPx}px`;
+
+          const sub = cueEl.querySelector(".cue-sub");
+          if (sub) sub.textContent = `${cue.time.toFixed(2)}s | ${newDuration.toFixed(1)}s an`;
+        };
+
+        const onResizeUp = () => {
+          window.removeEventListener("mousemove", onResizeMove);
+          window.removeEventListener("mouseup", onResizeUp);
+          resizeHandle.classList.remove("resizing");
+          this.renderTimeline();
+        };
+
+        resizeHandle.addEventListener("mousedown", (downEvent) => {
+          if (downEvent.button !== 0) return;
+          downEvent.stopPropagation();
+          resizeStartX = downEvent.clientX;
+          origDuration = cue.duration !== undefined ? cue.duration : 2.0;
+          resizeHandle.classList.add("resizing");
+
+          window.addEventListener("mousemove", onResizeMove);
+          window.addEventListener("mouseup", onResizeUp);
         });
 
         lane.appendChild(cueEl);
@@ -776,6 +869,7 @@ class LightShowStudio {
 
     const newCue = {
       time: Math.max(0, parseFloat(time.toFixed(2))),
+      duration: 2.0,
       state: "on",
       brightness: 255,
       rgb_color: [255, 0, 100],
@@ -798,6 +892,9 @@ class LightShowStudio {
     const cue = track.cues[cueIdx];
 
     this.dom.cueTimeInput.value = cue.time;
+    if (this.dom.cueDurationInput) {
+      this.dom.cueDurationInput.value = cue.duration !== undefined ? cue.duration : 2.0;
+    }
     this.setCueState(cue.state !== "off");
 
     const bri = cue.brightness !== undefined ? cue.brightness : 255;
@@ -847,6 +944,9 @@ class LightShowStudio {
 
     const cue = track.cues[cueIdx];
     cue.time = parseFloat(parseFloat(this.dom.cueTimeInput.value).toFixed(2));
+    if (this.dom.cueDurationInput) {
+      cue.duration = Math.max(0.1, parseFloat(parseFloat(this.dom.cueDurationInput.value || 2.0).toFixed(2)));
+    }
     cue.state = this.dom.cueStateOn.classList.contains("active") ? "on" : "off";
     
     if (cue.state === "on") {
@@ -883,6 +983,7 @@ class LightShowStudio {
       brightness: parseInt(this.dom.cueBrightnessSlider.value, 10),
       rgb_color: this.hexToRgb(this.dom.cueColorPicker.value),
       transition: parseFloat(this.dom.cueTransitionInput.value),
+      duration: parseFloat(this.dom.cueDurationInput?.value || 2.0),
       effect: this.dom.cueEffectSelect.value || "",
     };
 

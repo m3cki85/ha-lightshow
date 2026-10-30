@@ -112,9 +112,10 @@ class LightShowEngine:
         for track in tracks:
             for cue in track.get("cues", []):
                 t = float(cue.get("time", 0.0))
-                dur = float(cue.get("transition", 0.0))
-                if t + dur > max_cue_time:
-                    max_cue_time = t + dur
+                dur = float(cue.get("duration", 2.0))
+                trans = float(cue.get("transition", 0.0))
+                if t + dur + trans > max_cue_time:
+                    max_cue_time = t + dur + trans
 
         self._duration = float(audio_info.get("duration", 0.0))
         if self._duration <= 0 or max_cue_time > self._duration:
@@ -204,7 +205,8 @@ class LightShowEngine:
             if not entity_id:
                 continue
             track_type = track.get("type", "standard")
-            for cue in track.get("cues", []):
+            cues = track.get("cues", [])
+            for cue in cues:
                 cue_time = float(cue.get("time", 0.0))
                 flattened_cues.append({
                     "time": cue_time,
@@ -212,6 +214,23 @@ class LightShowEngine:
                     "track_type": track_type,
                     "cue": cue,
                 })
+
+                # If cue has duration and turns on light, add automatic off at end of duration
+                cue_dur = float(cue.get("duration", 2.0))
+                if cue.get("state", "on") != "off" and cue_dur > 0:
+                    end_time = round(cue_time + cue_dur, 2)
+                    has_immediate_next = any(abs(float(c.get("time", 0.0)) - end_time) < 0.1 for c in cues)
+                    if not has_immediate_next:
+                        off_transition = min(0.5, float(cue.get("transition", 0.5)))
+                        flattened_cues.append({
+                            "time": end_time,
+                            "entity_id": entity_id,
+                            "track_type": track_type,
+                            "cue": {
+                                "state": "off",
+                                "transition": off_transition
+                            }
+                        })
 
         flattened_cues.sort(key=lambda x: x["time"])
 
