@@ -118,12 +118,12 @@ class MusicAssistantHelper:
             return False
 
     def get_active_tracks(self) -> List[Dict[str, Any]]:
-        """Return tracks currently playing or paused on any media player."""
+        """Return tracks currently playing, paused or recently active on any media player."""
         active = []
         for state in self.hass.states.async_all("media_player"):
             attrs = state.attributes
             title = attrs.get("media_title")
-            if state.state in ("playing", "paused") and title:
+            if title and state.state in ("playing", "paused", "idle", "standby", "on"):
                 is_mass = False
                 if "mass_player_type" in attrs or "mass_player_id" in attrs:
                     is_mass = True
@@ -150,8 +150,9 @@ class MusicAssistantHelper:
                     "is_mass": is_mass,
                 })
 
-        # Sort so currently playing and Music Assistant players appear first
-        active.sort(key=lambda x: (x["state"] != "playing", not x["is_mass"], x["player_name"]))
+        # Sort priority: playing > paused > idle > other, and is_mass first
+        state_priority = {"playing": 0, "paused": 1, "idle": 2, "standby": 3}
+        active.sort(key=lambda x: (state_priority.get(x["state"], 4), not x["is_mass"], x["player_name"]))
         return active
 
     async def async_search(self, query: str, limit: int = 25) -> List[Dict[str, Any]]:

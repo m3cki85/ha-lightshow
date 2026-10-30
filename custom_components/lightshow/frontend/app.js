@@ -413,11 +413,15 @@ class LightShowStudio {
           card.className = "active-player-card";
           const songName = p.artist ? `${p.artist} - ${p.title}` : p.title;
           const durBadge = p.duration > 0 ? ` (${this.formatTime(p.duration)})` : "";
+          let stateLabel = "▶ Spielt gerade";
+          if (p.state === "paused") stateLabel = "⏸ Pausiert";
+          else if (p.state === "idle") stateLabel = "⏹ Zuletzt gespielt";
+
           card.innerHTML = `
             <div class="active-info">
-              <span class="active-badge">⚡ Aktuell auf: ${p.player_name} (${p.state === 'playing' ? '▶ Wiedergabe' : '⏸ Pausiert'})</span>
+              <span class="active-badge">⚡ ${p.player_name} (${stateLabel})</span>
               <strong>${songName}</strong>
-              <span>${p.album ? 'Album: ' + p.album : 'Music Assistant Stream'}${durBadge}</span>
+              <span>${p.album ? 'Album: ' + p.album : 'Music Assistant Track'}${durBadge}</span>
             </div>
             <button class="btn btn-accent btn-small" data-action="grab">⚡ Diesen Song übernehmen</button>
           `;
