@@ -19,6 +19,8 @@ class LightShowStudio {
     this.isPlaying = false;
     this.isLooping = false;
     this.selectedCueRef = null; // { trackId, cueIdx }
+    this.mediaHistory = [];
+    this.currentMediaItems = [];
     
     // Audio Context & Waveform
     this.audioCtx = null;
@@ -32,6 +34,7 @@ class LightShowStudio {
       btnSaveShow: document.getElementById("btn-save-show"),
       btnDeleteShow: document.getElementById("btn-delete-show"),
       btnExportYaml: document.getElementById("btn-export-yaml"),
+      btnBrowseMedia: document.getElementById("btn-browse-media"),
       audioSelect: document.getElementById("audio-select"),
       audioFileInput: document.getElementById("audio-file-input"),
       playerSelect: document.getElementById("player-select"),
@@ -77,6 +80,14 @@ class LightShowStudio {
       btnCloseAddLight: document.getElementById("btn-close-add-light"),
       lightSearchInput: document.getElementById("light-search-input"),
       lightsPickerList: document.getElementById("lights-picker-list"),
+      // Media Browser Modal
+      mediaModal: document.getElementById("media-browser-modal"),
+      btnCloseMediaBrowser: document.getElementById("btn-close-media-browser"),
+      btnCancelMediaBrowser: document.getElementById("btn-cancel-media-browser"),
+      mediaBreadcrumbs: document.getElementById("media-breadcrumbs"),
+      mediaSearchInput: document.getElementById("media-search-input"),
+      mediaLoadingIndicator: document.getElementById("media-loading-indicator"),
+      mediaItemsGrid: document.getElementById("media-items-grid"),
       // Export modal
       exportModal: document.getElementById("export-modal"),
       btnCloseExport: document.getElementById("btn-close-export"),
@@ -163,7 +174,11 @@ class LightShowStudio {
       if (e.target.value) this.loadShow(e.target.value);
     });
 
-    // Audio Select & Upload
+    // Audio Select, Browse & Upload
+    this.dom.btnBrowseMedia.addEventListener("click", () => this.openMediaBrowser());
+    this.dom.btnCloseMediaBrowser.addEventListener("click", () => this.dom.mediaModal.classList.add("hidden"));
+    this.dom.btnCancelMediaBrowser.addEventListener("click", () => this.dom.mediaModal.classList.add("hidden"));
+    this.dom.mediaSearchInput.addEventListener("input", (e) => this.filterMediaItems(e.target.value));
     this.dom.audioSelect.addEventListener("change", (e) => this.handleAudioSelect(e.target.value));
     this.dom.audioFileInput.addEventListener("change", (e) => this.handleAudioUpload(e.target.files[0]));
 
@@ -267,6 +282,146 @@ class LightShowStudio {
       this.renderAudioOptions();
     } catch (err) {
       console.error("Failed to load audio files:", err);
+    }
+  }
+
+  // --- MUSIC ASSISTANT & MEDIA SOURCE BROWSER ---
+
+  async openMediaBrowser(uri = null, title = "🏠 Mediathek") {
+    this.dom.mediaModal.classList.remove("hidden");
+    this.dom.mediaSearchInput.value = "";
+    
+    if (!uri) {
+      this.mediaHistory = [{ title: "🏠 Mediathek", uri: null }];
+    } else {
+      if (this.mediaHistory[this.mediaHistory.length - 1]?.uri !== uri) {
+        this.mediaHistory.push({ title, uri });
+      }
+    }
+    this.renderMediaBreadcrumbs();
+    await this.fetchMediaFolder(uri);
+  }
+
+  renderMediaBreadcrumbs() {
+    this.dom.mediaBreadcrumbs.innerHTML = "";
+    this.mediaHistory.forEach((h, idx) => {
+      const span = document.createElement("span");
+      span.className = "breadcrumb-item";
+      span.textContent = h.title;
+      span.addEventListener("click", () => {
+        this.mediaHistory = this.mediaHistory.slice(0, idx + 1);
+        this.renderMediaBreadcrumbs();
+        this.fetchMediaFolder(h.uri);
+      });
+      this.dom.mediaBreadcrumbs.appendChild(span);
+
+      if (idx < this.mediaHistory.length - 1) {
+        const sep = document.createElement("span");
+        sep.className = "breadcrumb-sep";
+        sep.textContent = " > ";
+        this.dom.mediaBreadcrumbs.appendChild(sep);
+      }
+    });
+  }
+
+  async fetchMediaFolder(uri) {
+    this.dom.mediaLoadingIndicator.textContent = "Lade Medien...";
+    this.dom.mediaLoadingIndicator.classList.remove("hidden");
+    this.dom.mediaItemsGrid.innerHTML = "";
+    
+    try {
+      const q = uri ? `?uri=${encodeURIComponent(uri)}` : "";
+      const res = await fetch(`${this.apiBase}/media/browse${q}`);
+      const data = await res.json();
+      this.dom.mediaLoadingIndicator.classList.add("hidden");
+
+      if (data && data.children && data.children.length > 0) {
+        this.currentMediaItems = data.children;
+        this.renderMediaGrid(this.currentMediaItems);
+      } else {
+        this.dom.mediaItemsGrid.innerHTML = `<div class="hint" style="grid-column: 1/-1; text-align: center; padding: 24px;">Keine Medien in diesem Ordner gefunden.</div>`;
+      }
+    } catch (err) {
+      this.dom.mediaLoadingIndicator.classList.add("hidden");
+      this.dom.mediaItemsGrid.innerHTML = `<div class="hint" style="grid-column: 1/-1; text-align: center; color: var(--danger-color); padding: 24px;">Fehler beim Laden: ${err.message}</div>`;
+    }
+  }
+
+  filterMediaItems(query) {
+    const q = query.toLowerCase();
+    const filtered = this.currentMediaItems.filter(item => 
+      (item.title && item.title.toLowerCase().includes(q)) ||
+      (item.media_class && item.media_class.toLowerCase().includes(q))
+    );
+    this.renderMediaGrid(filtered);
+  }
+
+  renderMediaGrid(items) {
+    this.dom.mediaItemsGrid.innerHTML = "";
+    if (items.length === 0) {
+      this.dom.mediaItemsGrid.innerHTML = `<div class="hint" style="grid-column: 1/-1; text-align: center; padding: 24px;">Keine Treffer für die Suche.</div>`;
+      return;
+    }
+
+    items.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "media-card";
+
+      const isFolder = item.can_expand;
+      const isTrack = item.can_play || item.media_class === "track";
+      
+      let icon = isFolder ? "📁" : "🎵";
+      if (item.media_class === "artist") icon = "👤";
+      else if (item.media_class === "album") icon = "💿";
+      else if (item.media_class === "playlist") icon = "📑";
+
+      card.innerHTML = `
+        <div class="media-card-icon">${icon}</div>
+        <div class="media-card-info">
+          <span class="media-card-title" title="${item.title}">${item.title}</span>
+          <span class="media-card-sub">${isFolder ? 'Ordner öffnen' : (item.media_class || 'Song übernehmen')}</span>
+        </div>
+      `;
+
+      card.addEventListener("click", () => {
+        if (isFolder) {
+          this.openMediaBrowser(item.media_content_id, item.title);
+        } else if (isTrack) {
+          this.selectMediaTrack(item);
+        }
+      });
+
+      this.dom.mediaItemsGrid.appendChild(card);
+    });
+  }
+
+  async selectMediaTrack(item) {
+    this.dom.mediaLoadingIndicator.textContent = `Lade "${item.title}"...`;
+    this.dom.mediaLoadingIndicator.classList.remove("hidden");
+
+    try {
+      const res = await fetch(`${this.apiBase}/media/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_content_id: item.media_content_id })
+      });
+      const data = await res.json();
+      this.dom.mediaLoadingIndicator.classList.add("hidden");
+
+      if (data.success && data.url) {
+        this.currentShow.audio.mass_uri = item.media_content_id;
+        this.currentShow.audio.title = item.title;
+        this.currentShow.audio.filename = item.title;
+        this.currentShow.audio.stream_url = data.url;
+
+        this.dom.mediaModal.classList.add("hidden");
+        this.renderShow();
+      } else {
+        alert("Konnte Stream-URL für diesen Song nicht auflösen: " + (data.error || "Unbekannter Fehler"));
+      }
+    } catch (err) {
+      this.dom.mediaLoadingIndicator.classList.add("hidden");
+      alert("Fehler beim Auflösen des Songs: " + err.message);
     }
   }
 

@@ -38,12 +38,15 @@
     <!-- Master Audio & Player Routing Bar -->
     <section class="routing-bar">
       <div class="routing-item">
-        <label for="audio-select">🎵 Audio-Quelle (Lokal / NAS):</label>
+        <label>🎵 Audio-Quelle:</label>
         <div class="input-with-action">
-          <select id="audio-select" class="select-input">
-            <option value="">-- Keine Audiodatei gewählt --</option>
+          <button id="btn-browse-media" class="btn btn-secondary" title="Song aus Music Assistant oder Mediathek wählen">
+            🎵 Song aus Music Assistant / Mediathek wählen
+          </button>
+          <select id="audio-select" class="select-input" style="max-width: 170px;" title="Bereits hochgeladene oder ausgewählte Dateien">
+            <option value="">-- Datei --</option>
           </select>
-          <label class="btn btn-small btn-secondary" title="Audiodatei (MP3/WAV) hochladen">
+          <label class="btn btn-small btn-secondary" title="Lokale Datei (MP3/WAV) hochladen">
             Upload
             <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
           </label>
@@ -210,6 +213,29 @@
           <button id="btn-test-cue-live" class="btn btn-accent" title="Sendet diesen Cue sofort an die Lampe zum Anschauen">💡 Am Gerät testen</button>
           <button id="btn-delete-cue" class="btn btn-danger">Löschen</button>
           <button id="btn-save-cue" class="btn btn-primary">Übernehmen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Media Browser Modal (Music Assistant & Home Assistant Media) -->
+    <div id="media-browser-modal" class="modal-overlay hidden">
+      <div class="modal-content media-modal-content">
+        <div class="modal-header">
+          <h3>🎵 Song auswählen (Music Assistant & Mediathek)</h3>
+          <button id="btn-close-media-browser" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="media-breadcrumb-bar">
+            <span id="media-breadcrumbs" class="media-breadcrumbs">🏠 Mediathek</span>
+          </div>
+          <input type="text" id="media-search-input" placeholder="Titel, Künstler oder Ordner filtern..." class="text-input">
+          <div id="media-loading-indicator" class="hint hidden" style="text-align:center; padding: 14px;">Lade Medien...</div>
+          <div id="media-items-grid" class="media-grid">
+            <!-- Dynamically populated media items -->
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-cancel-media-browser" class="btn btn-secondary">Abbrechen</button>
         </div>
       </div>
     </div>

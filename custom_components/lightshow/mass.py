@@ -118,14 +118,31 @@ class MusicAssistantHelper:
             return False
 
     async def async_browse_media_source(self, identifier: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Browse Home Assistant media sources (including Music Assistant)."""
+        """Browse Home Assistant media sources (including Music Assistant & Local Media)."""
         try:
             from homeassistant.components import media_source
             media = await media_source.async_browse_media(
                 self.hass,
-                identifier or "media-source://mass",
+                identifier or None,
             )
             return media.as_dict()
         except Exception as err:
-            _LOGGER.debug("Could not browse media_source for %s: %s", identifier, err)
+            _LOGGER.warning("Could not browse media_source for %s: %s", identifier, err)
+            return None
+
+    async def async_resolve_media(self, media_content_id: str) -> Optional[Dict[str, Any]]:
+        """Resolve media identifier to a playable/streamable audio URL."""
+        try:
+            from homeassistant.components import media_source
+            resolved = await media_source.async_resolve_media(
+                self.hass,
+                media_content_id,
+                None,
+            )
+            return {
+                "url": resolved.url,
+                "mime_type": resolved.mime_type,
+            }
+        except Exception as err:
+            _LOGGER.error("Failed to resolve media %s: %s", media_content_id, err)
             return None

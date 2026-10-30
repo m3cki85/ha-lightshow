@@ -30,6 +30,8 @@ def register_api_views(
     hass.http.register_view(LightShowAudioUploadView(storage))
     hass.http.register_view(LightShowAudioListView(storage))
     hass.http.register_view(LightShowAudioStreamView(storage))
+    hass.http.register_view(LightShowMediaBrowseView(mass_helper))
+    hass.http.register_view(LightShowMediaResolveView(mass_helper))
     hass.http.register_view(LightShowControlView(engine))
     hass.http.register_view(LightShowFrontendView())
 
@@ -268,6 +270,50 @@ class LightShowControlView(LightShowBaseView):
             return self.json({"success": False, "error": f"Unknown action {action}"}, status_code=400)
         except Exception as err:
             _LOGGER.error("Control API error: %s", err)
+            return self.json({"success": False, "error": str(err)}, status_code=500)
+
+
+class LightShowMediaBrowseView(LightShowBaseView):
+    """Browse Home Assistant / Music Assistant media sources."""
+    url = f"{API_URL_PREFIX}/media/browse"
+    name = "api:lightshow:media_browse"
+
+    def __init__(self, mass_helper: MusicAssistantHelper) -> None:
+        self.mass = mass_helper
+
+    async def get(self, request: web.Request) -> web.Response:
+        uri = request.query.get("uri")
+        result = await self.mass.async_browse_media_source(uri)
+        if result is None:
+            return self.json({"error": "Failed to browse media source"}, status_code=400)
+        return self.json(result)
+
+
+class LightShowMediaResolveView(LightShowBaseView):
+    """Resolve a media content ID to streamable URL."""
+    url = f"{API_URL_PREFIX}/media/resolve"
+    name = "api:lightshow:media_resolve"
+
+    def __init__(self, mass_helper: MusicAssistantHelper) -> None:
+        self.mass = mass_helper
+
+    async def post(self, request: web.Request) -> web.Response:
+        try:
+            data = await request.json()
+            content_id = data.get("media_content_id")
+            if not content_id:
+                return self.json({"success": False, "error": "Missing media_content_id"}, status_code=400)
+            
+            resolved = await self.mass.async_resolve_media(content_id)
+            if resolved and resolved.get("url"):
+                return self.json({
+                    "success": True,
+                    "url": resolved["url"],
+                    "mime_type": resolved.get("mime_type")
+                })
+            return self.json({"success": False, "error": "Could not resolve stream URL"}, status_code=404)
+        except Exception as err:
+            _LOGGER.error("Resolve media error: %s", err)
             return self.json({"success": False, "error": str(err)}, status_code=500)
 
 
