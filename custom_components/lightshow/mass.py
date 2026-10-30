@@ -13,15 +13,138 @@ class MusicAssistantHelper:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
 
+    def _get_mass_client(self) -> Optional[Any]:
+        """Retrieve the official MusicAssistantClient instance from Home Assistant."""
+        # 1. Config entries (modern HA pattern)
+        for domain in ("music_assistant", "mass"):
+            for entry in self.hass.config_entries.async_entries(domain):
+                runtime_data = getattr(entry, "runtime_data", None)
+                if runtime_data:
+                    client = getattr(runtime_data, "mass", runtime_data)
+                    if hasattr(client, "player_queues") or hasattr(client, "players"):
+                        return client
+                # Legacy entry data
+                entry_data = self.hass.data.get(domain, {})
+                if isinstance(entry_data, dict):
+                    client = entry_data.get(entry.entry_id) or entry_data.get("mass")
+                    if client and (hasattr(client, "player_queues") or hasattr(client, "players")):
+                        return client
+
+        # 2. Global hass.data
+        for key in ("mass", "music_assistant"):
+            if key in self.hass.data:
+                obj = self.hass.data[key]
+                if hasattr(obj, "player_queues") or hasattr(obj, "players"):
+                    return obj
+                elif isinstance(obj, dict):
+                    for v in obj.values():
+                        client = getattr(v, "mass", v)
+                        if hasattr(client, "player_queues") or hasattr(client, "players"):
+                            return client
+        return None
+
+    def get_mass_server_queues(self) -> List[Dict[str, Any]]:
+        """Retrieve all active queues from Music Assistant client."""
+        client = self._get_mass_client()
+        if not client:
+            return []
+
+        queues_data = []
+        try:
+            queues_controller = getattr(client, "player_queues", None)
+            if not queues_controller:
+                return []
+
+            raw_queues = []
+            if hasattr(queues_controller, "all"):
+                all_attr = getattr(queues_controller, "all")
+                if not callable(all_attr):
+                    raw_queues = list(all_attr.values()) if isinstance(all_attr, dict) else list(all_attr)
+            elif hasattr(queues_controller, "queues"):
+                q_attr = getattr(queues_controller, "queues")
+                raw_queues = list(q_attr.values()) if isinstance(q_attr, dict) else list(q_attr)
+            elif isinstance(queues_controller, (dict, list)):
+                raw_queues = list(queues_controller.values()) if isinstance(queues_controller, dict) else list(queues_controller)
+            else:
+                try:
+                    raw_queues = list(queues_controller)
+                except Exception:
+                    pass
+
+            for q in raw_queues:
+                queue_id = getattr(q, "queue_id", None) or getattr(q, "player_id", "")
+                display_name = getattr(q, "display_name", "") or getattr(q, "name", str(queue_id))
+                current_item = getattr(q, "current_item", None)
+                state = str(getattr(q, "state", "idle")).lower()
+
+                title = ""
+                artist = ""
+                album = ""
+                duration = 0.0
+                uri = ""
+                image = None
+
+                if current_item:
+                    title = getattr(current_item, "name", "")
+                    artists = getattr(current_item, "artists", [])
+                    if isinstance(artists, list):
+                        artist = ", ".join(getattr(a, "name", str(a)) for a in artists)
+                    else:
+                        artist = str(artists)
+
+                    album_obj = getattr(current_item, "album", None)
+                    if album_obj:
+                        album = getattr(album_obj, "name", str(album_obj))
+
+                    duration = float(getattr(current_item, "duration", 0) or 0)
+                    uri = getattr(current_item, "uri", "")
+                    image = getattr(current_item, "image", None)
+
+                queues_data.append({
+                    "queue_id": queue_id,
+                    "player_entity_id": f"media_player.{queue_id}" if not str(queue_id).startswith("media_player.") else queue_id,
+                    "player_name": display_name or f"Music Assistant ({queue_id})",
+                    "state": state,
+                    "title": title or "Bereit (Music Assistant)",
+                    "artist": artist,
+                    "album": album,
+                    "duration": duration,
+                    "media_content_id": uri or f"media-source://mass/player/{queue_id}",
+                    "image": image,
+                    "has_track": bool(title),
+                    "is_mass": True,
+                })
+        except Exception as err:
+            _LOGGER.debug("Error inspecting Music Assistant server queues: %s", err)
+
+        return queues_data
+
     def get_players(self) -> List[Dict[str, Any]]:
         """Return all available media_player entities, prioritizing Music Assistant players."""
         players = []
+        seen = set()
+
+        # 1. Native Music Assistant server players & queues
+        for q in self.get_mass_server_queues():
+            entity_id = q["player_entity_id"]
+            if entity_id not in seen:
+                seen.add(entity_id)
+                seen.add(q["player_name"].lower())
+                players.append({
+                    "entity_id": entity_id,
+                    "name": q["player_name"],
+                    "is_mass": True,
+                    "state": q["state"],
+                    "media_title": q["title"] if q.get("has_track") else "",
+                    "media_artist": q.get("artist", ""),
+                })
+
+        # 2. Home Assistant media_player states
         for state in self.hass.states.async_all("media_player"):
             attrs = state.attributes
             entity_id = state.entity_id
             friendly_name = attrs.get("friendly_name", entity_id)
 
-            # Detect if it is a Music Assistant player
             is_mass = False
             if "mass_player_type" in attrs or "mass_player_id" in attrs:
                 is_mass = True
@@ -31,6 +154,11 @@ class MusicAssistantHelper:
                 is_mass = True
             elif "mass" in entity_id.lower():
                 is_mass = True
+
+            if entity_id in seen or friendly_name.lower() in seen:
+                continue
+            seen.add(entity_id)
+            seen.add(friendly_name.lower())
 
             players.append({
                 "entity_id": entity_id,
@@ -118,28 +246,46 @@ class MusicAssistantHelper:
             return False
 
     def get_active_tracks(self) -> List[Dict[str, Any]]:
-        """Return tracks currently playing, paused or recently active on any media player."""
+        """Return tracks currently playing, paused or recently active on any media player or Music Assistant queue."""
         active = []
+        seen_ids = set()
+
+        # 1. Native Music Assistant server queues (finds local player, web player, soundcard, etc.)
+        for q in self.get_mass_server_queues():
+            seen_ids.add(q["player_entity_id"])
+            seen_ids.add(q["player_name"].lower())
+            active.append(q)
+
+        # 2. Home Assistant media_player states
         for state in self.hass.states.async_all("media_player"):
             attrs = state.attributes
             title = attrs.get("media_title")
-            if title and state.state in ("playing", "paused", "idle", "standby", "on"):
-                is_mass = False
-                if "mass_player_type" in attrs or "mass_player_id" in attrs:
-                    is_mass = True
-                elif attrs.get("app_name") == "Music Assistant":
-                    is_mass = True
-                elif "mass" in state.entity_id.lower():
-                    is_mass = True
+            friendly_name = attrs.get("friendly_name", state.entity_id)
 
-                duration = attrs.get("media_duration")
-                media_content_id = attrs.get("media_content_id")
-                if not media_content_id:
-                    media_content_id = f"media-source://mass/player/{state.entity_id}"
+            is_mass = False
+            if "mass_player_type" in attrs or "mass_player_id" in attrs:
+                is_mass = True
+            elif attrs.get("app_name") == "Music Assistant":
+                is_mass = True
+            elif "music_assistant" in str(state.context).lower():
+                is_mass = True
+            elif "mass" in state.entity_id.lower():
+                is_mass = True
 
+            if state.entity_id in seen_ids or friendly_name.lower() in seen_ids:
+                continue
+
+            duration = attrs.get("media_duration")
+            media_content_id = attrs.get("media_content_id")
+            if not media_content_id:
+                media_content_id = f"media-source://mass/player/{state.entity_id}"
+
+            if title:
+                seen_ids.add(state.entity_id)
+                seen_ids.add(friendly_name.lower())
                 active.append({
                     "player_entity_id": state.entity_id,
-                    "player_name": attrs.get("friendly_name", state.entity_id),
+                    "player_name": friendly_name,
                     "state": state.state,
                     "title": title,
                     "artist": attrs.get("media_artist", ""),
@@ -147,12 +293,35 @@ class MusicAssistantHelper:
                     "duration": float(duration) if duration else 0.0,
                     "media_content_id": media_content_id,
                     "image": attrs.get("entity_picture"),
+                    "has_track": True,
                     "is_mass": is_mass,
                 })
+            elif is_mass or "device" in state.entity_id.lower() or "local" in state.entity_id.lower() or "chrome" in state.entity_id.lower():
+                # Always include Music Assistant and local player entities so user can select them!
+                seen_ids.add(state.entity_id)
+                seen_ids.add(friendly_name.lower())
+                active.append({
+                    "player_entity_id": state.entity_id,
+                    "player_name": friendly_name,
+                    "state": state.state,
+                    "title": "Bereit (Music Assistant Player)",
+                    "artist": "",
+                    "album": "",
+                    "duration": 0.0,
+                    "media_content_id": media_content_id,
+                    "image": None,
+                    "has_track": False,
+                    "is_mass": True,
+                })
 
-        # Sort priority: playing > paused > idle > other, and is_mass first
+        # Sort priority: has_track first, then playing > paused > idle > other, and is_mass first
         state_priority = {"playing": 0, "paused": 1, "idle": 2, "standby": 3}
-        active.sort(key=lambda x: (state_priority.get(x["state"], 4), not x["is_mass"], x["player_name"]))
+        active.sort(key=lambda x: (
+            not x.get("has_track", False),
+            state_priority.get(x["state"], 4),
+            not x["is_mass"],
+            x["player_name"].lower()
+        ))
         return active
 
     async def async_search(self, query: str, limit: int = 25) -> List[Dict[str, Any]]:

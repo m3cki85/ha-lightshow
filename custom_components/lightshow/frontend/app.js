@@ -365,14 +365,28 @@ class LightShowStudio {
       const data = await res.json();
       const active = data.active || [];
 
-      if (active.length === 0) {
-        alert("Aktuell spielt kein Lautsprecher Musik ab.\n\nStarte einfach deinen gewünschten Song in Music Assistant (oder auf deinem Lautsprecher) und klicke dann erneut auf '⚡ Vom Player übernehmen'!");
-        this.openMediaBrowser();
-        return;
+      // Check if the currently selected player has a track
+      const selectedPlayerId = this.dom.playerSelect?.value;
+      if (selectedPlayerId) {
+        const found = active.find(p => p.player_entity_id === selectedPlayerId && p.has_track);
+        if (found) {
+          const songName = found.artist ? `${found.artist} - ${found.title}` : found.title;
+          const conf = confirm(`Gefunden auf ausgewähltem Player '${found.player_name}':\n🎵 ${songName}\n\nMöchtest du diesen Song für deine LightShow übernehmen?`);
+          if (conf) {
+            await this.selectMediaTrack({
+              media_content_id: found.media_content_id,
+              title: songName,
+              duration: found.duration,
+            });
+            return;
+          }
+        }
       }
 
-      if (active.length === 1) {
-        const p = active[0];
+      // If exactly 1 player with track is found
+      const playersWithTrack = active.filter(p => p.has_track);
+      if (playersWithTrack.length === 1) {
+        const p = playersWithTrack[0];
         const songName = p.artist ? `${p.artist} - ${p.title}` : p.title;
         const conf = confirm(`Gefunden auf '${p.player_name}':\n🎵 ${songName}\n\nMöchtest du diesen Song direkt für deine LightShow übernehmen?`);
         if (conf) {
@@ -385,11 +399,11 @@ class LightShowStudio {
             this.currentShow.settings.default_player_entity_id = p.player_entity_id;
             this.dom.playerSelect.value = p.player_entity_id;
           }
+          return;
         }
-        return;
       }
 
-      // Multiple players playing -> open modal with active players banner highlighted
+      // Open media browser modal with active player list
       this.openMediaBrowser();
     } catch (err) {
       alert("Fehler beim Abrufen aktiver Player: " + err.message);
@@ -408,32 +422,51 @@ class LightShowStudio {
 
       if (active.length > 0) {
         this.dom.mediaActivePlayerBanner.classList.remove("hidden");
+        
+        const header = document.createElement("div");
+        header.style.cssText = "font-size: 12px; font-weight: 700; color: var(--cyan-accent); margin-bottom: 6px; text-transform: uppercase;";
+        header.textContent = "🔊 Music Assistant & Lautsprecher Player (Song übernehmen oder Player wählen):";
+        this.dom.mediaActivePlayerBanner.appendChild(header);
+
         active.forEach(p => {
           const card = document.createElement("div");
           card.className = "active-player-card";
+          const hasTrack = !!p.has_track;
           const songName = p.artist ? `${p.artist} - ${p.title}` : p.title;
           const durBadge = p.duration > 0 ? ` (${this.formatTime(p.duration)})` : "";
+          
           let stateLabel = "▶ Spielt gerade";
           if (p.state === "paused") stateLabel = "⏸ Pausiert";
           else if (p.state === "idle") stateLabel = "⏹ Zuletzt gespielt";
+          else if (!hasTrack) stateLabel = "Bereit";
 
           card.innerHTML = `
             <div class="active-info">
               <span class="active-badge">⚡ ${p.player_name} (${stateLabel})</span>
               <strong>${songName}</strong>
-              <span>${p.album ? 'Album: ' + p.album : 'Music Assistant Track'}${durBadge}</span>
+              <span>${p.album ? 'Album: ' + p.album : (hasTrack ? 'Music Assistant Stream' : 'Keine aktuelle Wiedergabe')}${durBadge}</span>
             </div>
-            <button class="btn btn-accent btn-small" data-action="grab">⚡ Diesen Song übernehmen</button>
+            <button class="btn ${hasTrack ? 'btn-accent' : 'btn-secondary'} btn-small" data-action="action-btn">
+              ${hasTrack ? '⚡ Diesen Song übernehmen' : '🔊 Als Player wählen'}
+            </button>
           `;
-          card.querySelector('[data-action="grab"]').addEventListener("click", async () => {
-            await this.selectMediaTrack({
-              media_content_id: p.media_content_id,
-              title: songName,
-              duration: p.duration,
-            });
+
+          card.querySelector('[data-action="action-btn"]').addEventListener("click", async () => {
+            if (hasTrack) {
+              await this.selectMediaTrack({
+                media_content_id: p.media_content_id,
+                title: songName,
+                duration: p.duration,
+              });
+            } else {
+              alert(`Lautsprecher '${p.player_name}' für die Show ausgewählt!\n\nStarte deinen gewünschten Song in Music Assistant auf diesem Lautsprecher und klicke dann auf '⚡ Vom Player übernehmen'.`);
+            }
             if (p.player_entity_id) {
               this.currentShow.settings.default_player_entity_id = p.player_entity_id;
               this.dom.playerSelect.value = p.player_entity_id;
+            }
+            if (!hasTrack) {
+              this.dom.mediaModal.classList.add("hidden");
             }
           });
           this.dom.mediaActivePlayerBanner.appendChild(card);
