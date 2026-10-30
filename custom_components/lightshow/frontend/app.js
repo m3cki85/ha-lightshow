@@ -606,7 +606,7 @@ class LightShowStudio {
 
   drawWaveform(width) {
     const ctx = this.dom.waveformCanvas.getContext("2d");
-    const height = 130;
+    const height = 110;
     ctx.clearRect(0, 0, width, height);
 
     if (!this.audioBuffer) {
@@ -614,7 +614,7 @@ class LightShowStudio {
       ctx.fillRect(0, 0, width, height);
       ctx.fillStyle = "#64748b";
       ctx.font = "13px Inter";
-      ctx.fillText("🎵 Wähle oben einen Song aus Music Assistant oder verwalte Uploads für die Wellenform", 24, 70);
+      ctx.fillText("🎵 Wähle oben einen Song aus Music Assistant oder verwalte Uploads für die Wellenform", 24, 60);
       return;
     }
 

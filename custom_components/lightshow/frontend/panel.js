@@ -6,11 +6,10 @@ class LightShowPanel extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this._iframe) {
-      // Natural responsive layout without absolute x=0 positioning to prevent overlap under HA sidebar
       this.style.display = "block";
       this.style.width = "100%";
-      this.style.height = "100%";
-      this.style.position = "relative";
+      this.style.height = "calc(100vh - var(--header-height, 0px))";
+      this.style.maxHeight = "calc(100vh - var(--header-height, 0px))";
       this.style.boxSizing = "border-box";
       this.style.overflow = "hidden";
       this.style.backgroundColor = "#0e1117";

@@ -48,11 +48,11 @@ html, body {
 .studio-header {
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-color);
-  padding: 10px 20px;
+  padding: 6px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
@@ -63,7 +63,7 @@ html, body {
 }
 
 .logo-icon {
-  font-size: 22px;
+  font-size: 20px;
   background: var(--accent-gradient);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -71,7 +71,7 @@ html, body {
 }
 
 .logo-text h1 {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.5px;
 }
@@ -91,19 +91,19 @@ html, body {
 .routing-bar {
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-color);
-  padding: 8px 20px;
+  padding: 6px 16px;
   display: flex;
   flex-wrap: wrap;
-  gap: 20px;
+  gap: 14px;
   align-items: center;
-  font-size: 13px;
+  font-size: 12px;
   flex-shrink: 0;
 }
 
 .routing-item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .routing-item label {
@@ -122,11 +122,11 @@ html, body {
 .transport-bar {
   background: var(--bg-card);
   border-bottom: 1px solid var(--border-color);
-  padding: 8px 20px;
+  padding: 6px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
@@ -203,6 +203,7 @@ html, body {
 /* Workspace & Timeline */
 .sequencer-workspace {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -211,6 +212,7 @@ html, body {
 
 .timeline-container {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
@@ -250,7 +252,7 @@ html, body {
 
 /* Audio Row */
 .audio-row {
-  min-height: 165px;
+  min-height: 140px;
   background: #131720;
 }
 
