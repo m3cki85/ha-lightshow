@@ -57,6 +57,7 @@ class LightShowStudio {
       playheadLine: document.getElementById("playhead-line"),
       lightTracksList: document.getElementById("light-tracks-list"),
       btnAddLight: document.getElementById("btn-add-light"),
+      btnQuickAddLight: document.getElementById("btn-quick-add-light"),
       btnAddCueAll: document.getElementById("btn-add-cue-all"),
       btnOpenAudioManager: document.getElementById("btn-open-audio-manager"),
       audioManagerModal: document.getElementById("audio-manager-modal"),
@@ -212,8 +213,20 @@ class LightShowStudio {
 
     // Modals
     this.dom.btnAddLight.addEventListener("click", () => this.openAddLightModal());
+    if (this.dom.btnQuickAddLight) {
+      this.dom.btnQuickAddLight.addEventListener("click", () => this.openAddLightModal());
+    }
     this.dom.btnCloseAddLight.addEventListener("click", () => this.dom.addLightModal.classList.add("hidden"));
     this.dom.lightSearchInput.addEventListener("input", (e) => this.filterLightsList(e.target.value));
+
+    // Media Browser quick navigation
+    document.querySelectorAll(".btn-quick-media").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const quickUri = btn.getAttribute("data-quick");
+        const title = btn.textContent.trim();
+        this.openMediaBrowser(quickUri, title);
+      });
+    });
 
     this.dom.btnExportYaml.addEventListener("click", () => this.openExportModal());
     this.dom.btnCloseExport.addEventListener("click", () => this.dom.exportModal.classList.add("hidden"));
@@ -444,6 +457,10 @@ class LightShowStudio {
         this.currentShow.audio.title = item.title;
         this.currentShow.audio.filename = item.title;
         this.currentShow.audio.stream_url = data.url;
+        if (data.duration && data.duration > 0) {
+          this.currentShow.duration = data.duration;
+          this.currentShow.audio.duration = data.duration;
+        }
 
         this.dom.mediaModal.classList.add("hidden");
         this.renderShow();
@@ -519,7 +536,7 @@ class LightShowStudio {
       this.dom.audioTitleDisplay.textContent = this.currentShow.audio.title || this.currentShow.audio.filename || "Audiodatei geladen";
       this.dom.audioStatusBadge.textContent = "Bereit";
       this.dom.audioStatusBadge.classList.add("badge-wled");
-      this.loadAudioWaveform(this.currentShow.audio.stream_url);
+      this.loadAudioWaveform(this.currentShow.audio.stream_url, this.currentShow.duration || 30.0);
     } else {
       this.dom.audioTitleDisplay.textContent = "Kein Audio geladen";
       this.dom.audioStatusBadge.textContent = "Keine Datei";
@@ -583,13 +600,28 @@ class LightShowStudio {
     }
   }
 
-  async loadAudioWaveform(url) {
+  async loadAudioWaveform(url, fallbackDuration = 30.0) {
+    if (!url) return;
+    this.dom.audioStatusBadge.textContent = "Lade Audio...";
+    this.dom.audioStatusBadge.classList.add("badge-wled");
+
+    // Connect to browser audio player
+    this.dom.audioPlayer.src = url;
+    this.dom.audioPlayer.onloadedmetadata = () => {
+      if (this.dom.audioPlayer.duration && !isNaN(this.dom.audioPlayer.duration) && isFinite(this.dom.audioPlayer.duration) && this.dom.audioPlayer.duration > 0) {
+        this.currentShow.duration = this.dom.audioPlayer.duration;
+        this.currentShow.audio.duration = this.dom.audioPlayer.duration;
+        this.renderTimeline();
+        this.updateTimeDisplay();
+      }
+    };
+
     try {
-      this.dom.audioPlayer.src = url;
       if (!this.audioCtx) {
         this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const arrayBuffer = await response.arrayBuffer();
       this.audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
       
@@ -598,9 +630,16 @@ class LightShowStudio {
         this.currentShow.duration = this.audioBuffer.duration;
         this.currentShow.audio.duration = this.audioBuffer.duration;
       }
+      this.dom.audioStatusBadge.textContent = "Bereit";
       this.renderTimeline();
     } catch (err) {
-      console.warn("Waveform decode warning:", err);
+      console.warn("Waveform decode warning / using stream fallback:", err);
+      this.audioBuffer = null;
+      if (fallbackDuration && (!this.currentShow.duration || this.currentShow.duration <= 0)) {
+        this.currentShow.duration = fallbackDuration;
+      }
+      this.dom.audioStatusBadge.textContent = "Bereit (Stream)";
+      this.renderTimeline();
     }
   }
 
@@ -609,17 +648,17 @@ class LightShowStudio {
     const height = 110;
     ctx.clearRect(0, 0, width, height);
 
-    if (!this.audioBuffer) {
+    const hasAudio = !!(this.currentShow.audio.stream_url || this.currentShow.audio.mass_uri || this.currentShow.audio.filename);
+
+    if (!hasAudio) {
       ctx.fillStyle = "#161b26";
       ctx.fillRect(0, 0, width, height);
       ctx.fillStyle = "#64748b";
       ctx.font = "13px Inter";
-      ctx.fillText("🎵 Wähle oben einen Song aus Music Assistant oder verwalte Uploads für die Wellenform", 24, 60);
+      ctx.fillText("🎵 Wähle oben einen Song aus Music Assistant oder lade eine MP3 hoch", 24, 60);
       return;
     }
 
-    const channelData = this.audioBuffer.getChannelData(0);
-    const step = Math.ceil(channelData.length / width);
     const mid = height / 2;
 
     // Glowing neon gradient
@@ -629,18 +668,42 @@ class LightShowStudio {
     grad.addColorStop(1, "#ff007f");
     ctx.fillStyle = grad;
 
-    for (let i = 0; i < width; i++) {
-      let min = 1.0;
-      let max = -1.0;
-      for (let j = 0; j < step; j++) {
-        const datum = channelData[(i * step) + j];
-        if (datum < min) min = datum;
-        if (datum > max) max = datum;
+    if (this.audioBuffer) {
+      const channelData = this.audioBuffer.getChannelData(0);
+      const step = Math.ceil(channelData.length / width);
+
+      for (let i = 0; i < width; i++) {
+        let min = 1.0;
+        let max = -1.0;
+        for (let j = 0; j < step; j++) {
+          const datum = channelData[(i * step) + j];
+          if (datum < min) min = datum;
+          if (datum > max) max = datum;
+        }
+        const top = mid - (max * mid * 0.95);
+        const bottom = mid - (min * mid * 0.95);
+        const barH = Math.max(2, bottom - top);
+        ctx.fillRect(i, top, 1.8, barH);
       }
-      const top = mid - (max * mid * 0.95);
-      const bottom = mid - (min * mid * 0.95);
-      const barH = Math.max(2, bottom - top);
-      ctx.fillRect(i, top, 1.8, barH);
+    } else {
+      // Fallback synthetic rhythm waveform based on show duration & beats
+      const duration = this.currentShow.duration || 30.0;
+      const totalBars = Math.floor(width / 4);
+      for (let b = 0; b < totalBars; b++) {
+        const x = b * 4;
+        const timeAtX = (x / width) * duration;
+        const beat = Math.sin(timeAtX * Math.PI * 2) * 0.4 + Math.sin(timeAtX * Math.PI * 0.5) * 0.3 + 0.3;
+        const amp = Math.max(0.12, Math.min(0.9, beat * (0.6 + 0.4 * Math.sin(b * 13))));
+        const barH = amp * (height * 0.8);
+        const top = mid - (barH / 2);
+        ctx.fillRect(x, top, 2.5, barH);
+      }
+
+      ctx.fillStyle = "rgba(0,0,0,0.65)";
+      ctx.fillRect(16, 12, 360, 26);
+      ctx.fillStyle = "#00d2ff";
+      ctx.font = "600 11px 'JetBrains Mono', monospace";
+      ctx.fillText(`🎵 ${this.currentShow.audio.title || this.currentShow.audio.filename || "Audio Stream aktiv"}`, 24, 29);
     }
 
     // Midline
@@ -654,6 +717,20 @@ class LightShowStudio {
 
   renderLightTracks(timelineWidth) {
     this.dom.lightTracksList.innerHTML = "";
+
+    if (!this.currentShow.tracks || this.currentShow.tracks.length === 0) {
+      const emptyDiv = document.createElement("div");
+      emptyDiv.className = "empty-tracks-card";
+      emptyDiv.innerHTML = `
+        <div class="empty-icon">💡</div>
+        <h3>Noch keine Lampen in dieser Show</h3>
+        <p>Füge deine Home Assistant Lichter (z.B. Zigbee, Hue, Wi-Fi) oder WLED-Streifen hinzu, um Lichteffekte und Cues passend zum Song zu erstellen.</p>
+        <button id="btn-empty-add-light" class="btn btn-primary btn-large">+ Erste Lampe / WLED hinzufügen</button>
+      `;
+      emptyDiv.querySelector("#btn-empty-add-light").addEventListener("click", () => this.openAddLightModal());
+      this.dom.lightTracksList.appendChild(emptyDiv);
+      return;
+    }
 
     this.currentShow.tracks.forEach((track, trackIdx) => {
       const trackRow = document.createElement("div");

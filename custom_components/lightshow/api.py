@@ -3,6 +3,8 @@
 import os
 import mimetypes
 import logging
+from urllib.parse import quote, unquote
+import aiohttp
 from aiohttp import web
 from homeassistant.core import HomeAssistant
 from homeassistant.components.http import HomeAssistantView
@@ -32,6 +34,7 @@ def register_api_views(
     hass.http.register_view(LightShowAudioStreamView(storage))
     hass.http.register_view(LightShowMediaBrowseView(mass_helper))
     hass.http.register_view(LightShowMediaResolveView(mass_helper))
+    hass.http.register_view(LightShowMediaProxyView(hass, mass_helper, storage))
     hass.http.register_view(LightShowControlView(engine))
     hass.http.register_view(LightShowFrontendView())
 
@@ -323,15 +326,96 @@ class LightShowMediaResolveView(LightShowBaseView):
             
             resolved = await self.mass.async_resolve_media(content_id)
             if resolved and resolved.get("url"):
+                proxy_url = f"{API_URL_PREFIX}/media/proxy?media_content_id={quote(content_id)}"
                 return self.json({
                     "success": True,
-                    "url": resolved["url"],
-                    "mime_type": resolved.get("mime_type")
+                    "url": proxy_url,
+                    "raw_url": resolved["url"],
+                    "mime_type": resolved.get("mime_type"),
+                    "duration": resolved.get("duration")
                 })
             return self.json({"success": False, "error": "Could not resolve stream URL"}, status_code=404)
         except Exception as err:
             _LOGGER.error("Resolve media error: %s", err)
             return self.json({"success": False, "error": str(err)}, status_code=500)
+
+
+class LightShowMediaProxyView(LightShowBaseView):
+    """Proxy audio streams from Music Assistant & HA Media for browser waveform & playback."""
+    url = f"{API_URL_PREFIX}/media/proxy"
+    name = "api:lightshow:media_proxy"
+
+    def __init__(self, hass: HomeAssistant, mass_helper: MusicAssistantHelper, storage: LightShowStorage) -> None:
+        self.hass = hass
+        self.mass = mass_helper
+        self.storage = storage
+
+    async def get(self, request: web.Request) -> web.Response:
+        media_content_id = request.query.get("media_content_id")
+        target_url = request.query.get("url")
+
+        if media_content_id and not target_url:
+            resolved = await self.mass.async_resolve_media(media_content_id)
+            if resolved and resolved.get("url"):
+                target_url = resolved["url"]
+
+        if not target_url:
+            return web.Response(status=404, text="Target audio URL not found")
+
+        # 1. Local LightShow upload file
+        if "/api/lightshow/audio/" in target_url:
+            filename = target_url.split("/api/lightshow/audio/")[-1].split("?")[0]
+            filepath = self.storage.get_audio_file_path(filename)
+            if filepath and os.path.isfile(filepath):
+                content_type, _ = mimetypes.guess_type(filepath)
+                return web.FileResponse(filepath, headers={
+                    "Content-Type": content_type or "audio/mpeg",
+                    "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes"
+                })
+
+        # 2. Proxy internal HA media or remote streaming URL
+        try:
+            from homeassistant.helpers.aiohttp_client import async_get_clientsession
+            from homeassistant.helpers.network import get_url
+
+            if target_url.startswith("/"):
+                try:
+                    base_url = get_url(self.hass, allow_internal=True, allow_ip=True)
+                    full_url = f"{base_url}{target_url}"
+                except Exception:
+                    full_url = f"http://127.0.0.1:8123{target_url}"
+            else:
+                full_url = target_url
+
+            session = async_get_clientsession(self.hass)
+            req_headers = {}
+            if "Range" in request.headers:
+                req_headers["Range"] = request.headers["Range"]
+
+            client_timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_read=30)
+            resp = await session.get(full_url, headers=req_headers, allow_redirects=True, timeout=client_timeout)
+
+            headers = {
+                "Content-Type": resp.headers.get("Content-Type", "audio/mpeg"),
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+            }
+            if "Content-Length" in resp.headers:
+                headers["Content-Length"] = resp.headers["Content-Length"]
+            if "Content-Range" in resp.headers:
+                headers["Content-Range"] = resp.headers["Content-Range"]
+
+            stream_response = web.StreamResponse(status=resp.status, headers=headers)
+            await stream_response.prepare(request)
+
+            async for chunk in resp.content.iter_chunked(65536):
+                await stream_response.write(chunk)
+            await stream_response.write_eof()
+            return stream_response
+        except Exception as err:
+            _LOGGER.error("Failed to proxy media URL %s: %s", target_url, err)
+            return web.Response(status=500, text=f"Proxy error: {err}")
 
 
 class LightShowFrontendView(LightShowBaseView):

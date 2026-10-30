@@ -66,6 +66,10 @@
           <button id="mode-speaker" class="toggle-btn" title="Audio auf echtem Smart-Speaker via Music Assistant ausgeben">Live (Lautsprecher)</button>
         </div>
       </div>
+
+      <div class="routing-item" style="margin-left: auto;">
+        <button id="btn-quick-add-light" class="btn btn-primary" title="Lampe oder WLED-Streifen zur Show hinzufügen">💡 + Lampe hinzufügen</button>
+      </div>
     </section>
 
     <!-- Transport Control Bar -->
@@ -267,6 +271,14 @@
         <div class="modal-body">
           <div class="media-breadcrumb-bar">
             <span id="media-breadcrumbs" class="media-breadcrumbs">🏠 Mediathek</span>
+          </div>
+          <div class="media-quick-nav">
+            <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass">🎵 Music Assistant</button>
+            <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass/tracks">🎼 Alle Titel</button>
+            <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass/artists">👤 Künstler</button>
+            <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass/albums">💿 Alben</button>
+            <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass/playlists">📑 Playlists</button>
+            <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://media_source/local">📁 Lokale HA-Medien</button>
           </div>
           <input type="text" id="media-search-input" placeholder="Titel, Künstler oder Ordner filtern..." class="text-input">
           <div id="media-loading-indicator" class="hint hidden" style="text-align:center; padding: 14px;">Lade Medien...</div>

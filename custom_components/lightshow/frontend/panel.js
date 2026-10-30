@@ -8,11 +8,17 @@ class LightShowPanel extends HTMLElement {
     if (!this._iframe) {
       this.style.display = "block";
       this.style.width = "100%";
-      this.style.height = "calc(100vh - var(--header-height, 0px))";
-      this.style.maxHeight = "calc(100vh - var(--header-height, 0px))";
+      this.style.height = "100%";
+      this.style.minHeight = "0";
       this.style.boxSizing = "border-box";
       this.style.overflow = "hidden";
       this.style.backgroundColor = "#0e1117";
+
+      if (this.parentElement) {
+        this.parentElement.style.height = "100%";
+        this.parentElement.style.display = "block";
+        this.parentElement.style.overflow = "hidden";
+      }
 
       const iframe = document.createElement("iframe");
       iframe.src = "/api/lightshow/frontend/index.html";
