@@ -35,6 +35,7 @@ class LightShowStudio {
       btnDeleteShow: document.getElementById("btn-delete-show"),
       btnExportYaml: document.getElementById("btn-export-yaml"),
       btnBrowseMedia: document.getElementById("btn-browse-media"),
+      btnGrabActiveSong: document.getElementById("btn-grab-active-song"),
       audioSelect: document.getElementById("audio-select"),
       audioFileInput: document.getElementById("audio-file-input"),
       playerSelect: document.getElementById("player-select"),
@@ -92,10 +93,13 @@ class LightShowStudio {
       lightsPickerList: document.getElementById("lights-picker-list"),
       // Media Browser Modal
       mediaModal: document.getElementById("media-browser-modal"),
+      mediaActivePlayerBanner: document.getElementById("media-active-player-banner"),
       btnCloseMediaBrowser: document.getElementById("btn-close-media-browser"),
       btnCancelMediaBrowser: document.getElementById("btn-cancel-media-browser"),
       mediaBreadcrumbs: document.getElementById("media-breadcrumbs"),
       mediaSearchInput: document.getElementById("media-search-input"),
+      btnDoMediaSearch: document.getElementById("btn-do-media-search"),
+      btnClearMediaSearch: document.getElementById("btn-clear-media-search"),
       mediaLoadingIndicator: document.getElementById("media-loading-indicator"),
       mediaItemsGrid: document.getElementById("media-items-grid"),
       // Export modal
@@ -186,9 +190,33 @@ class LightShowStudio {
 
     // Audio Select, Browse, Upload & Manager
     this.dom.btnBrowseMedia.addEventListener("click", () => this.openMediaBrowser());
+    if (this.dom.btnGrabActiveSong) {
+      this.dom.btnGrabActiveSong.addEventListener("click", () => this.handleQuickGrabActiveSong());
+    }
     this.dom.btnCloseMediaBrowser.addEventListener("click", () => this.dom.mediaModal.classList.add("hidden"));
     this.dom.btnCancelMediaBrowser.addEventListener("click", () => this.dom.mediaModal.classList.add("hidden"));
-    this.dom.mediaSearchInput.addEventListener("input", (e) => this.filterMediaItems(e.target.value));
+
+    if (this.dom.btnDoMediaSearch) {
+      this.dom.btnDoMediaSearch.addEventListener("click", () => this.executeNativeSearch());
+    }
+    if (this.dom.btnClearMediaSearch) {
+      this.dom.btnClearMediaSearch.addEventListener("click", () => this.clearMediaSearch());
+    }
+    this.dom.mediaSearchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.executeNativeSearch();
+      }
+    });
+    this.dom.mediaSearchInput.addEventListener("input", (e) => {
+      const val = e.target.value.trim();
+      if (this.dom.btnClearMediaSearch) {
+        this.dom.btnClearMediaSearch.classList.toggle("hidden", val === "");
+      }
+      if (val === "" && this.isSearchActive) {
+        this.clearMediaSearch();
+      }
+    });
 
     if (this.dom.btnOpenAudioManager) {
       this.dom.btnOpenAudioManager.addEventListener("click", () => this.openAudioManager());
@@ -331,9 +359,174 @@ class LightShowStudio {
 
   // --- MUSIC ASSISTANT & MEDIA SOURCE BROWSER ---
 
+  async handleQuickGrabActiveSong() {
+    try {
+      const res = await fetch(`${this.apiBase}/media/active`);
+      const data = await res.json();
+      const active = data.active || [];
+
+      if (active.length === 0) {
+        alert("Aktuell spielt kein Lautsprecher Musik ab.\n\nStarte einfach deinen gewünschten Song in Music Assistant (oder auf deinem Lautsprecher) und klicke dann erneut auf '⚡ Vom Player übernehmen'!");
+        this.openMediaBrowser();
+        return;
+      }
+
+      if (active.length === 1) {
+        const p = active[0];
+        const songName = p.artist ? `${p.artist} - ${p.title}` : p.title;
+        const conf = confirm(`Gefunden auf '${p.player_name}':\n🎵 ${songName}\n\nMöchtest du diesen Song direkt für deine LightShow übernehmen?`);
+        if (conf) {
+          await this.selectMediaTrack({
+            media_content_id: p.media_content_id,
+            title: songName,
+            duration: p.duration,
+          });
+          if (p.player_entity_id) {
+            this.currentShow.settings.default_player_entity_id = p.player_entity_id;
+            this.dom.playerSelect.value = p.player_entity_id;
+          }
+        }
+        return;
+      }
+
+      // Multiple players playing -> open modal with active players banner highlighted
+      this.openMediaBrowser();
+    } catch (err) {
+      alert("Fehler beim Abrufen aktiver Player: " + err.message);
+    }
+  }
+
+  async checkAndRenderActivePlayersBanner() {
+    if (!this.dom.mediaActivePlayerBanner) return;
+    this.dom.mediaActivePlayerBanner.innerHTML = "";
+    this.dom.mediaActivePlayerBanner.classList.add("hidden");
+
+    try {
+      const res = await fetch(`${this.apiBase}/media/active`);
+      const data = await res.json();
+      const active = data.active || [];
+
+      if (active.length > 0) {
+        this.dom.mediaActivePlayerBanner.classList.remove("hidden");
+        active.forEach(p => {
+          const card = document.createElement("div");
+          card.className = "active-player-card";
+          const songName = p.artist ? `${p.artist} - ${p.title}` : p.title;
+          const durBadge = p.duration > 0 ? ` (${this.formatTime(p.duration)})` : "";
+          card.innerHTML = `
+            <div class="active-info">
+              <span class="active-badge">⚡ Aktuell auf: ${p.player_name} (${p.state === 'playing' ? '▶ Wiedergabe' : '⏸ Pausiert'})</span>
+              <strong>${songName}</strong>
+              <span>${p.album ? 'Album: ' + p.album : 'Music Assistant Stream'}${durBadge}</span>
+            </div>
+            <button class="btn btn-accent btn-small" data-action="grab">⚡ Diesen Song übernehmen</button>
+          `;
+          card.querySelector('[data-action="grab"]').addEventListener("click", async () => {
+            await this.selectMediaTrack({
+              media_content_id: p.media_content_id,
+              title: songName,
+              duration: p.duration,
+            });
+            if (p.player_entity_id) {
+              this.currentShow.settings.default_player_entity_id = p.player_entity_id;
+              this.dom.playerSelect.value = p.player_entity_id;
+            }
+          });
+          this.dom.mediaActivePlayerBanner.appendChild(card);
+        });
+      }
+    } catch (err) {
+      console.warn("Could not check active players:", err);
+    }
+  }
+
+  async executeNativeSearch() {
+    const query = this.dom.mediaSearchInput.value.trim();
+    if (!query) {
+      this.clearMediaSearch();
+      return;
+    }
+
+    this.isSearchActive = true;
+    if (this.dom.btnClearMediaSearch) this.dom.btnClearMediaSearch.classList.remove("hidden");
+
+    this.dom.mediaLoadingIndicator.textContent = `Suche in Music Assistant nach "${query}"...`;
+    this.dom.mediaLoadingIndicator.classList.remove("hidden");
+    this.dom.mediaItemsGrid.innerHTML = "";
+
+    try {
+      const res = await fetch(`${this.apiBase}/media/search?q=${encodeURIComponent(query)}`);
+      const data = await res.json();
+      this.dom.mediaLoadingIndicator.classList.add("hidden");
+
+      const results = data.results || [];
+      if (results.length === 0) {
+        this.dom.mediaItemsGrid.innerHTML = `
+          <div class="hint" style="grid-column: 1/-1; text-align: center; padding: 28px;">
+            Keine Songs in Music Assistant für "${query}" gefunden.<br>
+            <small style="margin-top: 10px; display:inline-block; color:var(--text-main);">Tipp: Starte den Song alternativ einfach in Music Assistant und klicke oben auf '⚡ Vom Player übernehmen'!</small>
+          </div>
+        `;
+        return;
+      }
+
+      this.renderMediaSearchResults(results);
+    } catch (err) {
+      this.dom.mediaLoadingIndicator.classList.add("hidden");
+      this.dom.mediaItemsGrid.innerHTML = `
+        <div class="hint" style="grid-column: 1/-1; text-align: center; color: var(--danger-color); padding: 24px;">
+          Fehler bei der Suche: ${err.message}
+        </div>
+      `;
+    }
+  }
+
+  clearMediaSearch() {
+    this.isSearchActive = false;
+    this.dom.mediaSearchInput.value = "";
+    if (this.dom.btnClearMediaSearch) this.dom.btnClearMediaSearch.classList.add("hidden");
+    this.fetchMediaFolder(this.mediaHistory[this.mediaHistory.length - 1]?.uri || null);
+  }
+
+  renderMediaSearchResults(items) {
+    this.dom.mediaItemsGrid.innerHTML = "";
+    items.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "media-card";
+
+      const subtitle = item.artist ? `${item.artist}${item.album ? ' • ' + item.album : ''}` : (item.album || 'Music Assistant');
+      const durText = item.duration > 0 ? this.formatTime(item.duration) : '';
+
+      card.innerHTML = `
+        <div class="media-card-icon">🎵</div>
+        <div class="media-card-info">
+          <span class="media-card-title" title="${item.title}">${item.title}</span>
+          <span class="media-card-sub" title="${subtitle}">${subtitle}</span>
+        </div>
+        ${durText ? `<span class="search-result-badge">${durText}</span>` : ''}
+      `;
+
+      card.addEventListener("click", () => {
+        const fullTitle = item.artist ? `${item.artist} - ${item.title}` : item.title;
+        this.selectMediaTrack({
+          media_content_id: item.media_content_id,
+          title: fullTitle,
+          duration: item.duration,
+        });
+      });
+
+      this.dom.mediaItemsGrid.appendChild(card);
+    });
+  }
+
   async openMediaBrowser(uri = null, title = "🏠 Mediathek") {
     this.dom.mediaModal.classList.remove("hidden");
     this.dom.mediaSearchInput.value = "";
+    if (this.dom.btnClearMediaSearch) this.dom.btnClearMediaSearch.classList.add("hidden");
+    this.isSearchActive = false;
+
+    // Check for currently playing music on any speaker
+    await this.checkAndRenderActivePlayersBanner();
     
     if (!uri) {
       this.mediaHistory = [{ title: "🏠 Mediathek", uri: null }];

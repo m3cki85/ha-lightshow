@@ -40,11 +40,14 @@
       <div class="routing-item">
         <label>🎵 Audio-Quelle:</label>
         <div class="input-with-action">
-          <button id="btn-browse-media" class="btn btn-secondary" title="Song aus Music Assistant oder Mediathek wählen">
-            🎵 Song aus Music Assistant / Mediathek wählen
+          <button id="btn-browse-media" class="btn btn-secondary" title="Song suchen oder in Music Assistant auswählen">
+            🎵 Song suchen / Mediathek
+          </button>
+          <button id="btn-grab-active-song" class="btn btn-accent" title="Aktuell auf Lautsprecher / Music Assistant laufenden Song direkt übernehmen">
+            ⚡ Vom Player übernehmen
           </button>
           <button id="btn-open-audio-manager" class="btn btn-secondary" title="Hochgeladene Dateien verwalten und löschen">
-            📁 Uploads verwalten
+            📁 Uploads
           </button>
           <select id="audio-select" class="select-input" style="max-width: 170px;" title="Aktuell gewählte Datei">
             <option value="">-- Datei --</option>
@@ -265,13 +268,23 @@
     <div id="media-browser-modal" class="modal-overlay hidden">
       <div class="modal-content media-modal-content">
         <div class="modal-header">
-          <h3>🎵 Song auswählen (Music Assistant & Mediathek)</h3>
+          <h3>🎵 Music Assistant: Song auswählen & suchen</h3>
           <button id="btn-close-media-browser" class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
-          <div class="media-breadcrumb-bar">
-            <span id="media-breadcrumbs" class="media-breadcrumbs">🏠 Mediathek</span>
+          <!-- Active Player Quick Transfer Card -->
+          <div id="media-active-player-banner" class="active-player-banner hidden"></div>
+
+          <!-- Direct Music Assistant Search -->
+          <div class="media-search-container">
+            <div class="search-input-group">
+              <input type="text" id="media-search-input" placeholder="🔍 Direkte Music-Assistant-Suche (z.B. Bohemian Rhapsody, Queen)..." class="text-input search-input">
+              <button id="btn-do-media-search" class="btn btn-primary">Suchen</button>
+              <button id="btn-clear-media-search" class="btn btn-secondary hidden" title="Suche zurücksetzen">✕</button>
+            </div>
+            <div class="search-hint">Tipp: Du kannst oben direkt suchen oder laufende Songs mit 1 Klick vom Player übernehmen!</div>
           </div>
+
           <div class="media-quick-nav">
             <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass">🎵 Music Assistant</button>
             <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass/tracks">🎼 Alle Titel</button>
@@ -280,14 +293,18 @@
             <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://mass/playlists">📑 Playlists</button>
             <button type="button" class="btn btn-micro btn-secondary btn-quick-media" data-quick="media-source://media_source/local">📁 Lokale HA-Medien</button>
           </div>
-          <input type="text" id="media-search-input" placeholder="Titel, Künstler oder Ordner filtern..." class="text-input">
+
+          <div class="media-breadcrumb-bar">
+            <span id="media-breadcrumbs" class="media-breadcrumbs">🏠 Mediathek</span>
+          </div>
+
           <div id="media-loading-indicator" class="hint hidden" style="text-align:center; padding: 14px;">Lade Medien...</div>
           <div id="media-items-grid" class="media-grid">
             <!-- Dynamically populated media items -->
           </div>
         </div>
         <div class="modal-footer">
-          <button id="btn-cancel-media-browser" class="btn btn-secondary">Abbrechen</button>
+          <button id="btn-cancel-media-browser" class="btn btn-secondary">Schließen</button>
         </div>
       </div>
     </div>

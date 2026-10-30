@@ -33,6 +33,8 @@ def register_api_views(
     hass.http.register_view(LightShowAudioListView(storage))
     hass.http.register_view(LightShowAudioStreamView(storage))
     hass.http.register_view(LightShowMediaBrowseView(mass_helper))
+    hass.http.register_view(LightShowMediaSearchView(mass_helper))
+    hass.http.register_view(LightShowMediaActiveView(mass_helper))
     hass.http.register_view(LightShowMediaResolveView(mass_helper))
     hass.http.register_view(LightShowMediaProxyView(hass, mass_helper, storage))
     hass.http.register_view(LightShowControlView(engine))
@@ -307,6 +309,34 @@ class LightShowMediaBrowseView(LightShowBaseView):
         if result is None:
             return self.json({"error": "Failed to browse media source"}, status_code=400)
         return self.json(result)
+
+
+class LightShowMediaSearchView(LightShowBaseView):
+    """Direct native search using Music Assistant action."""
+    url = f"{API_URL_PREFIX}/media/search"
+    name = "api:lightshow:media_search"
+
+    def __init__(self, mass_helper: MusicAssistantHelper) -> None:
+        self.mass = mass_helper
+
+    async def get(self, request: web.Request) -> web.Response:
+        query = request.query.get("q", "")
+        limit = int(request.query.get("limit", 25))
+        results = await self.mass.async_search(query, limit=limit)
+        return self.json({"success": True, "query": query, "results": results})
+
+
+class LightShowMediaActiveView(LightShowBaseView):
+    """Get tracks currently playing or paused on media players for instant transfer."""
+    url = f"{API_URL_PREFIX}/media/active"
+    name = "api:lightshow:media_active"
+
+    def __init__(self, mass_helper: MusicAssistantHelper) -> None:
+        self.mass = mass_helper
+
+    async def get(self, request: web.Request) -> web.Response:
+        active = self.mass.get_active_tracks()
+        return self.json({"success": True, "active": active})
 
 
 class LightShowMediaResolveView(LightShowBaseView):

@@ -117,6 +117,137 @@ class MusicAssistantHelper:
             _LOGGER.warning("Failed to pause media on %s: %s", player_entity_id, err)
             return False
 
+    def get_active_tracks(self) -> List[Dict[str, Any]]:
+        """Return tracks currently playing or paused on any media player."""
+        active = []
+        for state in self.hass.states.async_all("media_player"):
+            attrs = state.attributes
+            title = attrs.get("media_title")
+            if state.state in ("playing", "paused") and title:
+                is_mass = False
+                if "mass_player_type" in attrs or "mass_player_id" in attrs:
+                    is_mass = True
+                elif attrs.get("app_name") == "Music Assistant":
+                    is_mass = True
+                elif "mass" in state.entity_id.lower():
+                    is_mass = True
+
+                duration = attrs.get("media_duration")
+                media_content_id = attrs.get("media_content_id")
+                if not media_content_id:
+                    media_content_id = f"media-source://mass/player/{state.entity_id}"
+
+                active.append({
+                    "player_entity_id": state.entity_id,
+                    "player_name": attrs.get("friendly_name", state.entity_id),
+                    "state": state.state,
+                    "title": title,
+                    "artist": attrs.get("media_artist", ""),
+                    "album": attrs.get("media_album_name", ""),
+                    "duration": float(duration) if duration else 0.0,
+                    "media_content_id": media_content_id,
+                    "image": attrs.get("entity_picture"),
+                    "is_mass": is_mass,
+                })
+
+        # Sort so currently playing and Music Assistant players appear first
+        active.sort(key=lambda x: (x["state"] != "playing", not x["is_mass"], x["player_name"]))
+        return active
+
+    async def async_search(self, query: str, limit: int = 25) -> List[Dict[str, Any]]:
+        """Direct native search using Music Assistant action or active players."""
+        results = []
+        if not query or not query.strip():
+            return results
+
+        q = query.strip()
+
+        # 1. Native music_assistant.search action in Home Assistant
+        if self.hass.services.has_service("music_assistant", "search"):
+            for media_type_param in (["track"], "track"):
+                try:
+                    res = await self.hass.services.async_call(
+                        domain="music_assistant",
+                        service="search",
+                        service_data={"name": q, "media_type": media_type_param, "limit": limit},
+                        blocking=True,
+                        return_response=True,
+                    )
+                    if res and isinstance(res, dict):
+                        tracks_list = res.get("tracks")
+                        if not tracks_list:
+                            # Nested under instance or domain dictionary
+                            for v in res.values():
+                                if isinstance(v, dict) and "tracks" in v:
+                                    tracks_list = v["tracks"]
+                                    break
+                                elif isinstance(v, list) and v and isinstance(v[0], dict) and ("uri" in v[0] or "item_id" in v[0]):
+                                    tracks_list = v
+                                    break
+
+                        if tracks_list and isinstance(tracks_list, list):
+                            for item in tracks_list:
+                                artists = item.get("artists", [])
+                                if isinstance(artists, list):
+                                    artist_name = ", ".join(
+                                        a.get("name", "") if isinstance(a, dict) else str(a)
+                                        for a in artists
+                                    )
+                                else:
+                                    artist_name = str(artists)
+
+                                album_name = ""
+                                album = item.get("album")
+                                if isinstance(album, dict):
+                                    album_name = album.get("name", "")
+                                elif isinstance(album, str):
+                                    album_name = album
+
+                                uri = item.get("uri")
+                                item_id = item.get("item_id") or item.get("id")
+                                if not uri and item_id:
+                                    uri = f"media-source://mass/track/{item_id}"
+
+                                duration = item.get("duration")
+                                image = item.get("image")
+                                if isinstance(image, dict):
+                                    image = image.get("path") or image.get("url")
+
+                                results.append({
+                                    "title": item.get("name") or item.get("title") or "Unbekannter Titel",
+                                    "artist": artist_name,
+                                    "album": album_name,
+                                    "duration": float(duration) if duration else 0.0,
+                                    "media_content_id": uri,
+                                    "image": image,
+                                    "can_play": True,
+                                    "can_expand": False,
+                                    "media_class": "track",
+                                })
+
+                            if results:
+                                _LOGGER.info("music_assistant.search successfully returned %d tracks for '%s'", len(results), q)
+                                return results
+                except Exception as err:
+                    _LOGGER.debug("music_assistant.search attempt failed with param %s: %s", media_type_param, err)
+
+        # 2. Match from currently active tracks as quick fallback
+        for a in self.get_active_tracks():
+            if q.lower() in a["title"].lower() or q.lower() in a["artist"].lower() or q.lower() in a["album"].lower():
+                results.append({
+                    "title": a["title"],
+                    "artist": a["artist"],
+                    "album": a["album"],
+                    "duration": a["duration"],
+                    "media_content_id": a["media_content_id"],
+                    "image": a["image"],
+                    "can_play": True,
+                    "can_expand": False,
+                    "media_class": "track",
+                })
+
+        return results
+
     async def async_browse_media_source(self, identifier: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Browse Home Assistant media sources (including Music Assistant & Local Media)."""
         try:
@@ -134,15 +265,38 @@ class MusicAssistantHelper:
         """Resolve media identifier to a playable/streamable audio URL."""
         try:
             from homeassistant.components import media_source
-            resolved = await media_source.async_resolve_media(
-                self.hass,
-                media_content_id,
-                None,
-            )
-            return {
-                "url": resolved.url,
-                "mime_type": resolved.mime_type,
-            }
+
+            # First attempt: direct resolve
+            try:
+                resolved = await media_source.async_resolve_media(
+                    self.hass,
+                    media_content_id,
+                    None,
+                )
+                if resolved and resolved.url:
+                    return {
+                        "url": resolved.url,
+                        "mime_type": resolved.mime_type,
+                    }
+            except Exception as direct_err:
+                _LOGGER.debug("Direct resolve of %s failed: %s, trying prefix fallback", media_content_id, direct_err)
+
+            # Fallback attempt: if not starting with media-source://, try media-source://mass/
+            if not media_content_id.startswith("media-source://"):
+                clean_id = media_content_id.lstrip("/")
+                fallback_id = f"media-source://mass/{clean_id}"
+                resolved = await media_source.async_resolve_media(
+                    self.hass,
+                    fallback_id,
+                    None,
+                )
+                if resolved and resolved.url:
+                    return {
+                        "url": resolved.url,
+                        "mime_type": resolved.mime_type,
+                    }
+
+            return None
         except Exception as err:
             _LOGGER.error("Failed to resolve media %s: %s", media_content_id, err)
             return None
