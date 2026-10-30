@@ -423,12 +423,10 @@ class LightShowStudio {
       if (active.length > 0) {
         this.dom.mediaActivePlayerBanner.classList.remove("hidden");
         
-        const header = document.createElement("div");
-        header.style.cssText = "font-size: 12px; font-weight: 700; color: var(--cyan-accent); margin-bottom: 6px; text-transform: uppercase;";
-        header.textContent = "🔊 Music Assistant & Lautsprecher Player (Song übernehmen oder Player wählen):";
-        this.dom.mediaActivePlayerBanner.appendChild(header);
+        const playersWithTrack = active.filter(p => p.has_track);
+        const idlePlayers = active.filter(p => !p.has_track);
 
-        active.forEach(p => {
+        const createCard = (p) => {
           const card = document.createElement("div");
           card.className = "active-player-card";
           const hasTrack = !!p.has_track;
@@ -475,8 +473,50 @@ class LightShowStudio {
               this.dom.mediaModal.classList.add("hidden");
             }
           });
-          this.dom.mediaActivePlayerBanner.appendChild(card);
-        });
+          return card;
+        };
+
+        if (playersWithTrack.length > 0) {
+          const header = document.createElement("div");
+          header.style.cssText = "font-size: 11px; font-weight: 700; color: var(--cyan-accent); margin-bottom: 4px; text-transform: uppercase;";
+          header.textContent = "🎵 Aktive Wiedergabe gefunden (1-Klick Song übernehmen):";
+          this.dom.mediaActivePlayerBanner.appendChild(header);
+
+          playersWithTrack.forEach(p => {
+            this.dom.mediaActivePlayerBanner.appendChild(createCard(p));
+          });
+
+          if (idlePlayers.length > 0) {
+            const details = document.createElement("details");
+            details.style.cssText = "margin-top: 6px; font-size: 12px;";
+            details.innerHTML = `<summary style="color: var(--text-muted); cursor: pointer; padding: 4px 0;">▶ Weitere Lautsprecher zur Wiedergabe wählen (${idlePlayers.length})</summary>`;
+            const listDiv = document.createElement("div");
+            listDiv.style.cssText = "display: flex; flex-direction: column; gap: 6px; margin-top: 6px;";
+            idlePlayers.forEach(p => listDiv.appendChild(createCard(p)));
+            details.appendChild(listDiv);
+            this.dom.mediaActivePlayerBanner.appendChild(details);
+          }
+        } else {
+          const header = document.createElement("div");
+          header.style.cssText = "font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;";
+          header.textContent = "🔊 Verfügbare Lautsprecher & Music Assistant Player:";
+          this.dom.mediaActivePlayerBanner.appendChild(header);
+
+          idlePlayers.slice(0, 5).forEach(p => {
+            this.dom.mediaActivePlayerBanner.appendChild(createCard(p));
+          });
+
+          if (idlePlayers.length > 5) {
+            const details = document.createElement("details");
+            details.style.cssText = "margin-top: 4px; font-size: 12px;";
+            details.innerHTML = `<summary style="color: var(--text-muted); cursor: pointer; padding: 4px 0;">▶ ${idlePlayers.length - 5} weitere Lautsprecher anzeigen</summary>`;
+            const listDiv = document.createElement("div");
+            listDiv.style.cssText = "display: flex; flex-direction: column; gap: 6px; margin-top: 6px;";
+            idlePlayers.slice(5).forEach(p => listDiv.appendChild(createCard(p)));
+            details.appendChild(listDiv);
+            this.dom.mediaActivePlayerBanner.appendChild(details);
+          }
+        }
       }
     } catch (err) {
       console.warn("Could not check active players:", err);
