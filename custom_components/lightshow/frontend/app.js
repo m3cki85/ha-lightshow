@@ -38,6 +38,7 @@ class LightShowStudio {
       btnGrabActiveSong: document.getElementById("btn-grab-active-song"),
       audioSelect: document.getElementById("audio-select"),
       audioFileInput: document.getElementById("audio-file-input"),
+      directAudioFileInput: document.getElementById("direct-audio-file-input"),
       playerSelect: document.getElementById("player-select"),
       modeBrowser: document.getElementById("mode-browser"),
       modeSpeaker: document.getElementById("mode-speaker"),
@@ -52,10 +53,12 @@ class LightShowStudio {
       zoomSlider: document.getElementById("zoom-slider"),
       audioTitleDisplay: document.getElementById("audio-title-display"),
       audioStatusBadge: document.getElementById("audio-status-badge"),
+      timelineContainer: document.getElementById("timeline-container"),
       rulerCanvas: document.getElementById("ruler-canvas"),
       waveformCanvas: document.getElementById("waveform-canvas"),
       audioTimeline: document.getElementById("audio-timeline"),
       playheadLine: document.getElementById("playhead-line"),
+      cueHud: document.getElementById("cue-hud"),
       lightTracksList: document.getElementById("light-tracks-list"),
       btnAddLight: document.getElementById("btn-add-light"),
       btnQuickAddLight: document.getElementById("btn-quick-add-light"),
@@ -180,6 +183,14 @@ class LightShowStudio {
       this.seek(targetTime);
     });
 
+    // Synchronize horizontal scrolling between audio timeline and light lanes
+    this.dom.audioTimeline.addEventListener("scroll", () => {
+      const scrollLeft = this.dom.audioTimeline.scrollLeft;
+      document.querySelectorAll(".light-timeline-lane").forEach(lane => {
+        if (lane.scrollLeft !== scrollLeft) lane.scrollLeft = scrollLeft;
+      });
+    });
+
     // Shows CRUD
     this.dom.btnNewShow.addEventListener("click", () => this.handleNewShow());
     this.dom.btnSaveShow.addEventListener("click", () => this.handleSaveShow());
@@ -232,6 +243,41 @@ class LightShowStudio {
     this.dom.audioSelect.addEventListener("change", (e) => this.handleAudioSelect(e.target.value));
     if (this.dom.audioFileInput) {
       this.dom.audioFileInput.addEventListener("change", (e) => this.handleAudioUpload(e.target.files[0]));
+    }
+    if (this.dom.directAudioFileInput) {
+      this.dom.directAudioFileInput.addEventListener("change", (e) => {
+        if (e.target.files && e.target.files[0]) {
+          this.handleAudioUpload(e.target.files[0]);
+        }
+      });
+    }
+
+    // Drag & Drop audio file onto timeline
+    const dropZone = document.getElementById("timeline-container") || this.dom.audioTimeline;
+    if (dropZone) {
+      ["dragenter", "dragover"].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.add("drag-over");
+        });
+      });
+      ["dragleave", "drop"].forEach(evt => {
+        dropZone.addEventListener(evt, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropZone.classList.remove("drag-over");
+        });
+      });
+      dropZone.addEventListener("drop", (e) => {
+        const dt = e.dataTransfer;
+        if (dt && dt.files && dt.files.length > 0) {
+          const file = dt.files[0];
+          if (file.type.startsWith("audio/") || file.name.match(/\.(mp3|wav|ogg|flac|m4a|aac)$/i)) {
+            this.handleAudioUpload(file);
+          }
+        }
+      });
     }
 
     // Player Select
@@ -315,6 +361,58 @@ class LightShowStudio {
         this.stop();
       }
     });
+
+    // Global Keyboard Shortcuts (Space, Delete/Backspace, Escape, Arrows, Home)
+    window.addEventListener("keydown", (e) => {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toUpperCase() : "";
+      const isInput = tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || (e.target && e.target.isContentEditable);
+      
+      if (e.code === "Space" && !isInput) {
+        e.preventDefault();
+        if (this.isPlaying) {
+          this.pause();
+        } else {
+          this.play();
+        }
+      } else if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
+        if (this.selectedCueRef) {
+          e.preventDefault();
+          this.deleteSelectedCue();
+        }
+      } else if (e.key === "Escape") {
+        this.deselectCue();
+        if (this.dom.cueModal && !this.dom.cueModal.classList.contains("hidden")) this.closeInspector();
+        if (this.dom.mediaModal && !this.dom.mediaModal.classList.contains("hidden")) this.dom.mediaModal.classList.add("hidden");
+        if (this.dom.audioManagerModal && !this.dom.audioManagerModal.classList.contains("hidden")) this.dom.audioManagerModal.classList.add("hidden");
+        if (this.dom.addLightModal && !this.dom.addLightModal.classList.contains("hidden")) this.dom.addLightModal.classList.add("hidden");
+        if (this.dom.exportModal && !this.dom.exportModal.classList.contains("hidden")) this.dom.exportModal.classList.add("hidden");
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !isInput && this.selectedCueRef) {
+        e.preventDefault();
+        const { trackId, cueIdx } = this.selectedCueRef;
+        const track = this.currentShow.tracks.find(t => t.id === trackId);
+        if (track && track.cues[cueIdx]) {
+          const cue = track.cues[cueIdx];
+          const step = e.shiftKey ? 0.02 : (this.snap > 0 ? this.snap : 0.1);
+          const delta = e.key === "ArrowLeft" ? -step : step;
+          cue.time = Math.max(0, parseFloat((cue.time + delta).toFixed(2)));
+          track.cues.sort((a, b) => a.time - b.time);
+          this.selectedCueRef = { trackId, cueIdx: track.cues.indexOf(cue) };
+          this.renderTimeline();
+        }
+      } else if (e.key === "Home" && !isInput) {
+        e.preventDefault();
+        this.seek(0);
+      }
+    });
+
+    // Deselect cue when clicking on empty workspace
+    if (this.dom.timelineContainer) {
+      this.dom.timelineContainer.addEventListener("click", (e) => {
+        if (!e.target.closest(".cue-block") && !e.target.closest(".track-header") && !e.target.closest(".modal-content")) {
+          this.deselectCue();
+        }
+      });
+    }
   }
 
   setPlayMode(mode) {
@@ -736,7 +834,7 @@ class LightShowStudio {
       });
       const data = await res.json();
       if (data && data.success) {
-        if (data.url) {
+        if (data.direct_stream_available && data.url) {
           streamUrl = data.url;
         }
         if (data.duration && data.duration > 0) {
@@ -753,7 +851,7 @@ class LightShowStudio {
     this.currentShow.audio.mass_uri = item.media_content_id;
     this.currentShow.audio.title = item.title;
     this.currentShow.audio.filename = item.title;
-    this.currentShow.audio.stream_url = streamUrl || `${this.apiBase}/media/proxy?media_content_id=${encodeURIComponent(item.media_content_id)}`;
+    this.currentShow.audio.stream_url = streamUrl;
 
     if (trackDuration > 0) {
       this.currentShow.duration = trackDuration;
@@ -828,19 +926,20 @@ class LightShowStudio {
 
   renderShow() {
     // Show Header info
-    const hasAudio = !!(this.currentShow.audio.stream_url || this.currentShow.audio.mass_uri || this.currentShow.audio.filename);
+    const streamUrl = this.currentShow.audio.stream_url;
+    const hasAudio = !!(streamUrl || this.currentShow.audio.mass_uri || this.currentShow.audio.filename);
 
     if (hasAudio) {
       this.renderAudioOptions();
       this.dom.audioTitleDisplay.textContent = this.currentShow.audio.title || this.currentShow.audio.filename || "Audiodatei geladen";
-      this.dom.audioStatusBadge.textContent = "Bereit (Music Assistant)";
-      this.dom.audioStatusBadge.classList.add("badge-wled");
 
-      const audioUrl = this.currentShow.audio.stream_url || (this.currentShow.audio.mass_uri ? `${this.apiBase}/media/proxy?media_content_id=${encodeURIComponent(this.currentShow.audio.mass_uri)}` : null);
-      if (audioUrl) {
-        this.currentShow.audio.stream_url = audioUrl;
-        this.loadAudioWaveform(audioUrl, this.currentShow.duration || 30.0);
+      if (streamUrl) {
+        this.dom.audioStatusBadge.textContent = "✅ Bereit (Studio & Live)";
+        this.dom.audioStatusBadge.className = "badge badge-wled";
+        this.loadAudioWaveform(streamUrl, this.currentShow.duration || 30.0);
       } else {
+        this.dom.audioStatusBadge.textContent = "🔊 Nur Live-Lautsprecher (Keine MP3)";
+        this.dom.audioStatusBadge.className = "badge badge-zigbee";
         this.dom.audioPlayer.removeAttribute("src");
         this.audioBuffer = null;
       }
@@ -848,7 +947,7 @@ class LightShowStudio {
       this.renderAudioOptions();
       this.dom.audioTitleDisplay.textContent = "Kein Audio geladen";
       this.dom.audioStatusBadge.textContent = "Keine Datei";
-      this.dom.audioStatusBadge.classList.remove("badge-wled");
+      this.dom.audioStatusBadge.className = "badge";
       this.dom.audioPlayer.removeAttribute("src");
       this.audioBuffer = null;
     }
@@ -1025,6 +1124,37 @@ class LightShowStudio {
     ctx.stroke();
   }
 
+  showHud(x, y, badgeType, badgeText, valHtml) {
+    if (!this.dom.cueHud) return;
+    const badgeClass = badgeType === "resize" ? "hud-badge-resize" : (badgeType === "clone" ? "hud-badge-clone" : "hud-badge-move");
+    this.dom.cueHud.innerHTML = `
+      <span class="hud-badge ${badgeClass}">${badgeText}</span>
+      <span class="hud-val">${valHtml}</span>
+    `;
+    this.dom.cueHud.style.left = `${x}px`;
+    this.dom.cueHud.style.top = `${y}px`;
+    this.dom.cueHud.classList.remove("hidden");
+  }
+
+  hideHud() {
+    if (this.dom.cueHud) {
+      this.dom.cueHud.classList.add("hidden");
+    }
+  }
+
+  selectCue(trackId, cueIdx) {
+    this.selectedCueRef = { trackId, cueIdx };
+    document.querySelectorAll(".cue-block").forEach(el => {
+      const isMatch = el.dataset.trackId === trackId && parseInt(el.dataset.cueIdx, 10) === cueIdx;
+      el.classList.toggle("selected", isMatch);
+    });
+  }
+
+  deselectCue() {
+    this.selectedCueRef = null;
+    document.querySelectorAll(".cue-block.selected").forEach(el => el.classList.remove("selected"));
+  }
+
   renderLightTracks(timelineWidth) {
     this.dom.lightTracksList.innerHTML = "";
 
@@ -1045,6 +1175,7 @@ class LightShowStudio {
     this.currentShow.tracks.forEach((track, trackIdx) => {
       const trackRow = document.createElement("div");
       trackRow.className = "track-row light-track-row";
+      trackRow.dataset.trackId = track.id;
 
       // Left Header
       const header = document.createElement("div");
@@ -1111,7 +1242,14 @@ class LightShowStudio {
       const lane = document.createElement("div");
       lane.className = "track-timeline light-timeline-lane";
       lane.style.width = `${timelineWidth}px`;
+      lane.scrollLeft = this.dom.audioTimeline ? this.dom.audioTimeline.scrollLeft : 0;
       lane.title = "Klicken, um an dieser Stelle einen Keyframe (Cue) zu setzen";
+
+      lane.addEventListener("scroll", () => {
+        if (this.dom.audioTimeline && this.dom.audioTimeline.scrollLeft !== lane.scrollLeft) {
+          this.dom.audioTimeline.scrollLeft = lane.scrollLeft;
+        }
+      });
 
       // Click on empty space to add Cue
       lane.addEventListener("click", (e) => {
@@ -1125,15 +1263,23 @@ class LightShowStudio {
         this.addCueToTrack(track.id, time);
       });
 
-      // Render Cues with Drag-to-Move and Drag-to-Resize
+      // Render Cues with Dual Handles, Smooth Resizing, Drag & Drop
       track.cues.forEach((cue, cueIdx) => {
         const cueEl = document.createElement("div");
         cueEl.className = "cue-block";
+        cueEl.dataset.trackId = track.id;
+        cueEl.dataset.cueIdx = cueIdx;
+        cueEl.dataset.time = cue.time;
+        const dur = cue.duration !== undefined ? cue.duration : 2.0;
+        cueEl.dataset.duration = dur;
+
         if (cue.state === "off") cueEl.classList.add("cue-off");
+        if (this.selectedCueRef && this.selectedCueRef.trackId === track.id && this.selectedCueRef.cueIdx === cueIdx) {
+          cueEl.classList.add("selected");
+        }
 
         const leftPx = cue.time * this.zoom;
-        const dur = cue.duration !== undefined ? cue.duration : 2.0;
-        const widthPx = Math.max(28, dur * this.zoom);
+        const widthPx = Math.max(24, dur * this.zoom);
         cueEl.style.left = `${leftPx}px`;
         cueEl.style.width = `${widthPx}px`;
 
@@ -1146,97 +1292,222 @@ class LightShowStudio {
 
         const labelText = cue.state === "off" ? "AUS" : (cue.effect || `${Math.round((cue.brightness || 255) / 2.55)}%`);
         cueEl.innerHTML = `
-          <div class="cue-drag-body" title="Gedrückt halten und ziehen zum Verschieben">
+          <div class="cue-handle-left" title="Linken Rand ziehen: Startzeit anpassen (Shift für freies Ziehen)"></div>
+          <div class="cue-drag-body" title="Ziehen zum Verschieben | Alt+Ziehen zum Duplizieren | Doppelklick für Optionen">
             <span class="cue-label">${labelText}</span>
             <span class="cue-sub">${cue.time.toFixed(2)}s | ${dur.toFixed(1)}s an</span>
           </div>
-          <div class="cue-resize-handle" title="Rechten Rand ziehen, um Leuchtdauer zu verändern"></div>
+          <div class="cue-handle-right" title="Rechten Rand ziehen: Dauer anpassen (Shift für freies Ziehen)"></div>
         `;
 
-        // Interactive Drag to Move
-        const dragBody = cueEl.querySelector(".cue-drag-body");
-        let startX = 0;
-        let origTime = cue.time;
-        let hasMoved = false;
+        // 1. LEFT RESIZE HANDLE (Adjust Start Time & Duration, Keep End Point Fixed)
+        const handleLeft = cueEl.querySelector(".cue-handle-left");
+        let leftStartX = 0;
+        let leftOrigTime = cue.time;
+        let leftOrigDur = dur;
+        let leftFixedEndTime = leftOrigTime + leftOrigDur;
 
-        const onMouseMove = (moveEvent) => {
-          const deltaX = moveEvent.clientX - startX;
-          if (Math.abs(deltaX) > 3) hasMoved = true;
+        const onLeftResizeMove = (moveEvent) => {
+          const deltaX = moveEvent.clientX - leftStartX;
+          let newStartTime = leftOrigTime + deltaX / this.zoom;
+          if (!moveEvent.shiftKey && this.snap > 0) {
+            newStartTime = Math.round(newStartTime / this.snap) * this.snap;
+          }
+          newStartTime = Math.max(0, Math.min(newStartTime, leftFixedEndTime - 0.1));
+          const newDur = Math.max(0.1, parseFloat((leftFixedEndTime - newStartTime).toFixed(2)));
+          newStartTime = parseFloat(newStartTime.toFixed(2));
+
+          cue.time = newStartTime;
+          cue.duration = newDur;
+          cueEl.style.left = `${newStartTime * this.zoom}px`;
+          cueEl.style.width = `${Math.max(20, newDur * this.zoom)}px`;
+          cueEl.dataset.time = newStartTime;
+          cueEl.dataset.duration = newDur;
+
+          const sub = cueEl.querySelector(".cue-sub");
+          if (sub) sub.textContent = `${newStartTime.toFixed(2)}s | ${newDur.toFixed(1)}s an`;
+
+          this.showHud(moveEvent.clientX, moveEvent.clientY, "resize", "↔ Startzeit", `Start: ${newStartTime.toFixed(2)}s | Dauer: ${newDur.toFixed(2)}s | Ende: ${leftFixedEndTime.toFixed(2)}s`);
+        };
+
+        const onLeftResizeUp = () => {
+          window.removeEventListener("mousemove", onLeftResizeMove);
+          window.removeEventListener("mouseup", onLeftResizeUp);
+          handleLeft.classList.remove("resizing");
+          this.hideHud();
+          track.cues.sort((a, b) => a.time - b.time);
+          this.selectedCueRef = { trackId: track.id, cueIdx: track.cues.indexOf(cue) };
+          this.renderTimeline();
+        };
+
+        handleLeft.addEventListener("mousedown", (downEvent) => {
+          if (downEvent.button !== 0) return;
+          downEvent.stopPropagation();
+          leftStartX = downEvent.clientX;
+          leftOrigTime = cue.time;
+          leftOrigDur = cue.duration !== undefined ? cue.duration : 2.0;
+          leftFixedEndTime = leftOrigTime + leftOrigDur;
+          handleLeft.classList.add("resizing");
+
+          window.addEventListener("mousemove", onLeftResizeMove);
+          window.addEventListener("mouseup", onLeftResizeUp);
+        });
+
+        // 2. RIGHT RESIZE HANDLE (Adjust Duration, Keep Start Fixed)
+        const handleRight = cueEl.querySelector(".cue-handle-right");
+        let rightStartX = 0;
+        let rightOrigDur = dur;
+
+        const onRightResizeMove = (moveEvent) => {
+          const deltaX = moveEvent.clientX - rightStartX;
+          let newDur = rightOrigDur + deltaX / this.zoom;
+          if (!moveEvent.shiftKey && this.snap > 0) {
+            newDur = Math.round(newDur / this.snap) * this.snap;
+          }
+          newDur = Math.max(0.1, parseFloat(newDur.toFixed(2)));
+
+          cue.duration = newDur;
+          cueEl.style.width = `${Math.max(20, newDur * this.zoom)}px`;
+          cueEl.dataset.duration = newDur;
+
+          const sub = cueEl.querySelector(".cue-sub");
+          if (sub) sub.textContent = `${cue.time.toFixed(2)}s | ${newDur.toFixed(1)}s an`;
+
+          this.showHud(moveEvent.clientX, moveEvent.clientY, "resize", "↔ Dauer", `Dauer: ${newDur.toFixed(2)}s | Ende: ${(cue.time + newDur).toFixed(2)}s`);
+        };
+
+        const onRightResizeUp = () => {
+          window.removeEventListener("mousemove", onRightResizeMove);
+          window.removeEventListener("mouseup", onRightResizeUp);
+          handleRight.classList.remove("resizing");
+          this.hideHud();
+          this.renderTimeline();
+        };
+
+        handleRight.addEventListener("mousedown", (downEvent) => {
+          if (downEvent.button !== 0) return;
+          downEvent.stopPropagation();
+          rightStartX = downEvent.clientX;
+          rightOrigDur = cue.duration !== undefined ? cue.duration : 2.0;
+          handleRight.classList.add("resizing");
+
+          window.addEventListener("mousemove", onRightResizeMove);
+          window.addEventListener("mouseup", onRightResizeUp);
+        });
+
+        // 3. CENTER DRAG BODY (Move / Alt+Duplicate / Inter-Track Transfer)
+        const dragBody = cueEl.querySelector(".cue-drag-body");
+        let bodyStartX = 0;
+        let bodyStartY = 0;
+        let bodyOrigTime = cue.time;
+        let hasMoved = false;
+        let isCloning = false;
+        let activeCue = cue;
+        let hoverTargetTrackId = null;
+
+        const onBodyMouseMove = (moveEvent) => {
+          const deltaX = moveEvent.clientX - bodyStartX;
+          const deltaY = moveEvent.clientY - bodyStartY;
+          if (Math.hypot(deltaX, deltaY) > 3) hasMoved = true;
           if (!hasMoved) return;
 
           cueEl.classList.add("dragging");
-          let newTime = Math.max(0, origTime + deltaX / this.zoom);
-          if (this.snap > 0) {
+          let newTime = Math.max(0, bodyOrigTime + deltaX / this.zoom);
+          if (!moveEvent.shiftKey && this.snap > 0) {
             newTime = Math.round(newTime / this.snap) * this.snap;
           }
           newTime = Math.max(0, parseFloat(newTime.toFixed(2)));
-          cue.time = newTime;
+          activeCue.time = newTime;
           cueEl.style.left = `${newTime * this.zoom}px`;
+          cueEl.dataset.time = newTime;
+
           const sub = cueEl.querySelector(".cue-sub");
-          if (sub) sub.textContent = `${newTime.toFixed(2)}s | ${(cue.duration || 2.0).toFixed(1)}s an`;
+          if (sub) sub.textContent = `${newTime.toFixed(2)}s | ${(activeCue.duration || 2.0).toFixed(1)}s an`;
+
+          // Check vertical hover track
+          document.querySelectorAll(".light-track-row.drop-target").forEach(el => el.classList.remove("drop-target"));
+          const hoverEls = document.elementsFromPoint(moveEvent.clientX, moveEvent.clientY) || [];
+          const targetRow = hoverEls.find(el => el.classList && el.classList.contains("light-track-row"));
+          
+          let targetTrackName = "";
+          if (targetRow && targetRow.dataset.trackId) {
+            hoverTargetTrackId = targetRow.dataset.trackId;
+            targetRow.classList.add("drop-target");
+            const targetTrack = this.currentShow.tracks.find(t => t.id === hoverTargetTrackId);
+            if (targetTrack && targetTrack.id !== track.id) {
+              targetTrackName = ` ➔ ${targetTrack.name}`;
+            }
+          } else {
+            hoverTargetTrackId = null;
+          }
+
+          const badgeType = isCloning ? "clone" : "move";
+          const badgeText = isCloning ? "➕ Duplizieren" : "✥ Verschieben";
+          this.showHud(moveEvent.clientX, moveEvent.clientY, badgeType, badgeText, `Zeit: ${newTime.toFixed(2)}s (Dauer: ${(activeCue.duration || 2.0).toFixed(1)}s)${targetTrackName}`);
         };
 
-        const onMouseUp = () => {
-          window.removeEventListener("mousemove", onMouseMove);
-          window.removeEventListener("mouseup", onMouseUp);
+        const onBodyMouseUp = () => {
+          window.removeEventListener("mousemove", onBodyMouseMove);
+          window.removeEventListener("mouseup", onBodyMouseUp);
           cueEl.classList.remove("dragging");
+          document.querySelectorAll(".light-track-row.drop-target").forEach(el => el.classList.remove("drop-target"));
+          this.hideHud();
 
           if (hasMoved) {
+            // If dropped on another track, transfer cue!
+            if (hoverTargetTrackId && hoverTargetTrackId !== track.id) {
+              const targetTrack = this.currentShow.tracks.find(t => t.id === hoverTargetTrackId);
+              if (targetTrack) {
+                if (!isCloning) {
+                  const srcIdx = track.cues.indexOf(activeCue);
+                  if (srcIdx !== -1) track.cues.splice(srcIdx, 1);
+                }
+                targetTrack.cues.push(activeCue);
+                targetTrack.cues.sort((a, b) => a.time - b.time);
+                this.selectedCueRef = { trackId: targetTrack.id, cueIdx: targetTrack.cues.indexOf(activeCue) };
+                this.renderTimeline();
+                return;
+              }
+            }
+
             track.cues.sort((a, b) => a.time - b.time);
+            this.selectedCueRef = { trackId: track.id, cueIdx: track.cues.indexOf(activeCue) };
             this.renderTimeline();
           } else {
-            // Click without drag -> open inspector
-            this.openInspector(track.id, cueIdx);
+            // Click without movement: select cue
+            this.selectCue(track.id, cueIdx);
           }
         };
 
         dragBody.addEventListener("mousedown", (downEvent) => {
           if (downEvent.button !== 0) return;
           downEvent.stopPropagation();
-          startX = downEvent.clientX;
-          origTime = cue.time;
+          bodyStartX = downEvent.clientX;
+          bodyStartY = downEvent.clientY;
           hasMoved = false;
+          hoverTargetTrackId = null;
 
-          window.addEventListener("mousemove", onMouseMove);
-          window.addEventListener("mouseup", onMouseUp);
+          // Alt-Key duplicate / clone
+          if (downEvent.altKey) {
+            isCloning = true;
+            const cloned = JSON.parse(JSON.stringify(cue));
+            track.cues.push(cloned);
+            activeCue = cloned;
+            bodyOrigTime = cloned.time;
+          } else {
+            isCloning = false;
+            activeCue = cue;
+            bodyOrigTime = cue.time;
+          }
+
+          window.addEventListener("mousemove", onBodyMouseMove);
+          window.addEventListener("mouseup", onBodyMouseUp);
         });
 
-        // Interactive Drag to Resize Duration
-        const resizeHandle = cueEl.querySelector(".cue-resize-handle");
-        let resizeStartX = 0;
-        let origDuration = dur;
-
-        const onResizeMove = (moveEvent) => {
-          const deltaX = moveEvent.clientX - resizeStartX;
-          let newDuration = origDuration + deltaX / this.zoom;
-          if (this.snap > 0) {
-            newDuration = Math.round(newDuration / this.snap) * this.snap;
-          }
-          newDuration = Math.max(0.2, parseFloat(newDuration.toFixed(2)));
-          cue.duration = newDuration;
-          const newWidthPx = Math.max(24, newDuration * this.zoom);
-          cueEl.style.width = `${newWidthPx}px`;
-
-          const sub = cueEl.querySelector(".cue-sub");
-          if (sub) sub.textContent = `${cue.time.toFixed(2)}s | ${newDuration.toFixed(1)}s an`;
-        };
-
-        const onResizeUp = () => {
-          window.removeEventListener("mousemove", onResizeMove);
-          window.removeEventListener("mouseup", onResizeUp);
-          resizeHandle.classList.remove("resizing");
-          this.renderTimeline();
-        };
-
-        resizeHandle.addEventListener("mousedown", (downEvent) => {
-          if (downEvent.button !== 0) return;
-          downEvent.stopPropagation();
-          resizeStartX = downEvent.clientX;
-          origDuration = cue.duration !== undefined ? cue.duration : 2.0;
-          resizeHandle.classList.add("resizing");
-
-          window.addEventListener("mousemove", onResizeMove);
-          window.addEventListener("mouseup", onResizeUp);
+        // Double-click opens inspector
+        dragBody.addEventListener("dblclick", (e) => {
+          e.stopPropagation();
+          this.openInspector(track.id, cueIdx);
         });
 
         lane.appendChild(cueEl);
@@ -1496,9 +1767,14 @@ class LightShowStudio {
       const data = await res.json();
       if (data.success) {
         await this.loadAudioFiles();
-        this.handleAudioSelect(data.url);
+        const fileUrl = data.url || (data.filename ? `/api/lightshow/audio/${data.filename}` : null);
+        if (fileUrl) {
+          this.handleAudioSelect(fileUrl);
+          this.setPlayMode("browser");
+        }
       } else {
-        alert("Upload fehlgeschlagen: " + data.error);
+        alert("Upload fehlgeschlagen: " + (data.error || "Unbekannter Fehler"));
+        this.renderShow();
       }
     } catch (err) {
       alert("Fehler beim Upload: " + err.message);
@@ -1730,12 +2006,8 @@ data:
     } else {
       // --- STUDIO (BROWSER) MODUS ---
       // Vorschau direkt im Browser / PC - Lautsprecher im Raum bleibt KOMPLETT stumm!
-      if (!this.dom.audioPlayer.src) {
-        const audioSrc = this.currentShow.audio.stream_url || 
-          (this.currentShow.audio.mass_uri ? `${this.apiBase}/media/proxy?media_content_id=${encodeURIComponent(this.currentShow.audio.mass_uri)}` : null);
-        if (audioSrc) {
-          this.dom.audioPlayer.src = audioSrc;
-        }
+      if (!this.dom.audioPlayer.src && this.currentShow.audio.stream_url) {
+        this.dom.audioPlayer.src = this.currentShow.audio.stream_url;
       }
 
       if (this.dom.audioPlayer.src) {
@@ -1745,6 +2017,13 @@ data:
         } catch (e) {
           console.warn("Browser audio playback warning:", e);
         }
+      } else {
+        alert(
+          "Hinweis: Für die Audio-Wiedergabe und Waveform im Studio wird eine lokale MP3-Audiodatei benötigt.\n\n" +
+          "Klicke oben auf '➕ MP3 laden' oder ziehe deine MP3-Datei per Drag & Drop in die Zeitleiste.\n\n" +
+          "(Die Live-Ausgabe auf deinem Lautsprecher funktioniert bereits über 'Live (Lautsprecher)')."
+        );
+        return;
       }
     }
 
@@ -1870,11 +2149,27 @@ data:
 
     // Auto-scroll timeline to keep playhead in view
     const container = this.dom.audioTimeline;
-    if (x > container.scrollLeft + container.clientWidth - 100) {
-      container.scrollLeft = x - 100;
-    } else if (x < container.scrollLeft) {
-      container.scrollLeft = Math.max(0, x - 50);
+    if (container) {
+      if (x > container.scrollLeft + container.clientWidth - 100) {
+        container.scrollLeft = x - 100;
+      } else if (x < container.scrollLeft) {
+        container.scrollLeft = Math.max(0, x - 50);
+      }
+      // Sync all light track lanes scroll position with audio timeline
+      const scrollPos = container.scrollLeft;
+      document.querySelectorAll(".light-timeline-lane").forEach(lane => {
+        if (lane.scrollLeft !== scrollPos) lane.scrollLeft = scrollPos;
+      });
     }
+
+    // Active playing glow on cues currently being played
+    const visibleCues = document.querySelectorAll(".cue-block");
+    visibleCues.forEach(el => {
+      const time = parseFloat(el.dataset.time || 0);
+      const duration = parseFloat(el.dataset.duration || 2.0);
+      const isActive = this.currentTime >= time && this.currentTime <= (time + duration);
+      el.classList.toggle("cue-active-playing", isActive);
+    });
   }
 
   updateTimeDisplay() {

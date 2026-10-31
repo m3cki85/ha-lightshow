@@ -392,21 +392,7 @@ class LightShowMediaProxyView(LightShowBaseView):
                 target_url = resolved["url"]
 
         if not target_url:
-            # Clean silent MP3 fallback so browser HTML5 audio element does not fail
-            silent_mp3 = (
-                b"\xff\xfb\x90d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-            ) * 10
-            return web.Response(
-                body=silent_mp3,
-                content_type="audio/mpeg",
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": str(len(silent_mp3)),
-                }
-            )
+            return web.Response(status=404, text="No playable audio stream available for this item")
 
         # 1. Local LightShow upload file
         if "/api/lightshow/audio/" in target_url:

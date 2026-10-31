@@ -11,105 +11,100 @@
 </head>
 <body>
   <div id="app" class="studio-container">
-    <!-- Top Studio Header -->
-    <header class="studio-header">
-      <div class="logo-group">
-        <div class="logo-icon">✦</div>
-        <div class="logo-text">
-          <h1>LightShow Studio</h1>
-          <span class="sub">Music Assistant & Home Assistant Sequencer</span>
+    <!-- Modern DAW Studio Header / Control Deck -->
+    <header class="studio-topdeck">
+      <!-- Deck Row 1: Brand, Transport & Main Controls -->
+      <div class="deck-row main-deck-row">
+        <!-- Logo & Project Actions -->
+        <div class="deck-group brand-group">
+          <div class="brand-badge">
+            <span class="brand-sparkle">✦</span>
+            <span class="brand-name">LightShow<span class="brand-sub">Studio</span></span>
+          </div>
+          <div class="project-pill-group">
+            <select id="show-select" class="select-pill" title="Lichtshow auswählen">
+              <option value="">-- Show laden --</option>
+            </select>
+            <button id="btn-save-show" class="btn-pill btn-pill-primary" title="Show in Home Assistant speichern">💾 Speichern</button>
+            <button id="btn-new-show" class="btn-pill" title="Neue Show anlegen">➕ Neu</button>
+            <button id="btn-delete-show" class="btn-pill btn-pill-danger" title="Show löschen">🗑</button>
+          </div>
+        </div>
+
+        <!-- Center: DAW Transport Controls -->
+        <div class="deck-group transport-cluster">
+          <div class="transport-btn-group">
+            <button id="btn-rewind" class="btn-transport" title="Zum Anfang (Pos1)">⏮</button>
+            <button id="btn-play" class="btn-transport btn-transport-play" title="Abspielen (Leertaste)">▶</button>
+            <button id="btn-pause" class="btn-transport btn-transport-pause" title="Pausieren (Leertaste)" style="display:none;">⏸</button>
+            <button id="btn-stop" class="btn-transport" title="Stopp">⏹</button>
+            <button id="btn-loop" class="btn-transport btn-transport-toggle" title="Endlosschleife (Loop)">🔁</button>
+          </div>
+
+          <div class="timecode-display" title="Aktuelle Position / Gesamtdauer">
+            <span id="time-current" class="timecode-digits">00:00.000</span>
+            <span class="timecode-sep">/</span>
+            <span id="time-total" class="timecode-total">00:00.000</span>
+          </div>
+        </div>
+
+        <!-- Right: Playback Mode & Export -->
+        <div class="deck-group mode-export-group">
+          <div class="mode-pill-toggle">
+            <button id="mode-browser" class="mode-btn" title="Audio direkt im Browser abspielen (für Studio-Vorschau)">💻 Studio</button>
+            <button id="mode-speaker" class="mode-btn active" title="Wiedergabe live auf Lautsprecher">🔊 Live</button>
+          </div>
+          <button id="btn-export-yaml" class="btn-pill btn-pill-accent" title="In Home Assistant Automation nutzen">📋 YAML</button>
         </div>
       </div>
 
-      <div class="project-actions">
-        <select id="show-select" class="select-input">
-          <option value="">-- Show laden --</option>
-        </select>
-        <button id="btn-new-show" class="btn btn-secondary" title="Neue Show anlegen">+ Neu</button>
-        <button id="btn-save-show" class="btn btn-primary" title="Show in Home Assistant speichern">💾 Speichern</button>
-        <button id="btn-delete-show" class="btn btn-danger" title="Show löschen">🗑</button>
-      </div>
+      <!-- Deck Row 2: Audio Routing, Speaker, Grid Snap & Light Actions -->
+      <div class="deck-row sub-deck-row">
+        <!-- Audio Source Hub -->
+        <div class="deck-group audio-hub">
+          <span class="deck-label">Audio:</span>
+          <label class="btn-upload-direct" title="Audiodatei (MP3, WAV, FLAC, OGG) vom Rechner laden">
+            <span>➕ MP3 laden</span>
+            <input type="file" id="direct-audio-file-input" accept="audio/*" style="display: none;">
+          </label>
+          <select id="audio-select" class="select-pill audio-select-pill" title="Aktuell geladene Audiodatei">
+            <option value="">-- Keine Datei gewählt --</option>
+          </select>
+          <button id="btn-open-audio-manager" class="btn-pill" title="Hochgeladene Dateien verwalten">📁 Dateien</button>
+          <button id="btn-browse-media" class="btn-pill" title="Home Assistant Mediathek durchsuchen">🎵 Mediathek</button>
+          <button id="btn-grab-active-song" class="btn-pill" title="Aktuell auf Lautsprecher laufenden Song übernehmen">⚡ Vom Player</button>
+        </div>
 
-      <div class="header-right">
-        <button id="btn-export-yaml" class="btn btn-accent">📋 In Automation nutzen</button>
+        <!-- Speaker Hub -->
+        <div class="deck-group speaker-hub">
+          <span class="deck-label">Lautsprecher:</span>
+          <select id="player-select" class="select-pill speaker-select-pill" title="Wiedergabegerät für Live-Modus">
+            <option value="">-- Lautsprecher wählen --</option>
+          </select>
+        </div>
+
+        <!-- Studio Tools (Snap, Zoom, +Lampe) -->
+        <div class="deck-group tools-hub">
+          <div class="tool-item">
+            <span class="deck-label">Snap:</span>
+            <select id="snap-select" class="select-pill snap-pill">
+              <option value="0">Aus</option>
+              <option value="0.1">0.1 s</option>
+              <option value="0.25" selected>1/4 s</option>
+              <option value="0.5">1/2 s</option>
+              <option value="1.0">1.0 s</option>
+            </select>
+          </div>
+
+          <div class="tool-item zoom-item">
+            <span class="deck-label">Zoom:</span>
+            <input type="range" id="zoom-slider" min="20" max="250" value="70" class="zoom-range">
+          </div>
+
+          <button id="btn-quick-add-light" class="btn-pill btn-pill-primary" title="Lampe oder WLED-Streifen zur Show hinzufügen">💡 + Lampe</button>
+        </div>
       </div>
     </header>
-
-    <!-- Master Audio & Player Routing Bar -->
-    <section class="routing-bar">
-      <div class="routing-item">
-        <label>🎵 Audio-Quelle:</label>
-        <div class="input-with-action">
-          <button id="btn-browse-media" class="btn btn-secondary" title="Song suchen oder in Music Assistant auswählen">
-            🎵 Song suchen / Mediathek
-          </button>
-          <button id="btn-grab-active-song" class="btn btn-accent" title="Aktuell auf Lautsprecher / Music Assistant laufenden Song direkt übernehmen">
-            ⚡ Vom Player übernehmen
-          </button>
-          <button id="btn-open-audio-manager" class="btn btn-secondary" title="Hochgeladene Dateien verwalten und löschen">
-            📁 Uploads
-          </button>
-          <select id="audio-select" class="select-input" style="max-width: 170px;" title="Aktuell gewählte Datei">
-            <option value="">-- Datei --</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="routing-item">
-        <label for="player-select">🔊 Music Assistant Lautsprecher:</label>
-        <select id="player-select" class="select-input">
-          <option value="">-- Lautsprecher auswählen --</option>
-        </select>
-      </div>
-
-      <div class="routing-item playback-mode-group">
-        <label>Modus:</label>
-        <div class="toggle-group">
-          <button id="mode-browser" class="toggle-btn" title="Audio im Browser abspielen (nur bei lokalen MP3-Dateien)">Studio (Browser)</button>
-          <button id="mode-speaker" class="toggle-btn active" title="Audio auf Lautsprecher via Music Assistant ausgeben">Live (Lautsprecher)</button>
-        </div>
-      </div>
-
-      <div class="routing-item" style="margin-left: auto;">
-        <button id="btn-quick-add-light" class="btn btn-primary" title="Lampe oder WLED-Streifen zur Show hinzufügen">💡 + Lampe hinzufügen</button>
-      </div>
-    </section>
-
-    <!-- Transport Control Bar -->
-    <section class="transport-bar">
-      <div class="transport-controls">
-        <button id="btn-rewind" class="transport-btn" title="Zum Anfang">⏮</button>
-        <button id="btn-play" class="transport-btn play-btn" title="Abspielen">▶</button>
-        <button id="btn-pause" class="transport-btn" title="Pausieren">⏸</button>
-        <button id="btn-stop" class="transport-btn" title="Stopp">⏹</button>
-        <button id="btn-loop" class="transport-btn toggle-btn" title="Endlosschleife (Loop)">🔁</button>
-      </div>
-
-      <div class="time-display">
-        <span id="time-current">00:00.000</span>
-        <span class="time-sep">/</span>
-        <span id="time-total">00:00.000</span>
-      </div>
-
-      <div class="timeline-tools">
-        <div class="tool-group">
-          <label>Snap:</label>
-          <select id="snap-select" class="select-input select-small">
-            <option value="0">Aus</option>
-            <option value="0.1">0.1 s</option>
-            <option value="0.25" selected>0.25 s (1/4)</option>
-            <option value="0.5">0.5 s (1/2)</option>
-            <option value="1.0">1.0 s</option>
-            <option value="2.0">2.0 s</option>
-          </select>
-        </div>
-
-        <div class="tool-group zoom-group">
-          <label>Zoom:</label>
-          <input type="range" id="zoom-slider" min="20" max="250" value="70" class="slider-input">
-        </div>
-      </div>
-    </section>
 
     <!-- Main Workspace: Audio Waveform & Multitrack Sequencer -->
     <main class="sequencer-workspace">
@@ -339,6 +334,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Floating Live Drag & Resize Tooltip HUD -->
+    <div id="cue-hud" class="cue-hud hidden"></div>
 
     <!-- Hidden Audio Element for Browser Playback -->
     <audio id="browser-audio-player" preload="auto"></audio>
