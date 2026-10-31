@@ -385,6 +385,18 @@ class LightShowMediaProxyView(LightShowBaseView):
     async def get(self, request: web.Request) -> web.Response:
         media_content_id = request.query.get("media_content_id")
         target_url = request.query.get("url")
+        file_param = request.query.get("file")
+
+        # 0. Direct local file query parameter (?file=...)
+        if file_param:
+            unquoted_path = unquote(file_param)
+            if os.path.isfile(unquoted_path):
+                content_type, _ = mimetypes.guess_type(unquoted_path)
+                return web.FileResponse(unquoted_path, headers={
+                    "Content-Type": content_type or "audio/mpeg",
+                    "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes"
+                })
 
         if media_content_id and not target_url:
             resolved = await self.mass.async_resolve_media(media_content_id)
@@ -405,6 +417,18 @@ class LightShowMediaProxyView(LightShowBaseView):
                     "Access-Control-Allow-Origin": "*",
                     "Accept-Ranges": "bytes"
                 })
+
+        # 2. Local file path directly in target_url or file:// URI
+        clean_target = target_url
+        if clean_target.startswith("file://"):
+            clean_target = clean_target[7:]
+        if os.path.isfile(clean_target):
+            content_type, _ = mimetypes.guess_type(clean_target)
+            return web.FileResponse(clean_target, headers={
+                "Content-Type": content_type or "audio/mpeg",
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes"
+            })
 
         # 2. Proxy internal HA media or remote streaming URL
         try:

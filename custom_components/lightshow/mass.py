@@ -1,7 +1,9 @@
 """Music Assistant integration helper."""
 
+import os
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
+from urllib.parse import quote, unquote
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
@@ -12,6 +14,133 @@ class MusicAssistantHelper:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
+
+    def _extract_item_details(self, item_obj: Any) -> Dict[str, Any]:
+        """Extract rich provider and track metadata from a Music Assistant item object."""
+        res: Dict[str, Any] = {
+            "title": "",
+            "artist": "",
+            "album": "",
+            "duration": 0.0,
+            "uri": "",
+            "image": None,
+            "provider": "",
+            "provider_label": "Music Assistant",
+            "file_path": "",
+            "provider_mappings": [],
+        }
+        if not item_obj:
+            return res
+
+        # Title
+        res["title"] = getattr(item_obj, "name", "") or getattr(item_obj, "title", "")
+
+        # Artists
+        artists = getattr(item_obj, "artists", [])
+        if isinstance(artists, list):
+            res["artist"] = ", ".join(getattr(a, "name", str(a)) for a in artists)
+        elif artists:
+            res["artist"] = str(artists)
+
+        # Album
+        album_obj = getattr(item_obj, "album", None)
+        if album_obj:
+            res["album"] = getattr(album_obj, "name", str(album_obj))
+
+        # Duration
+        res["duration"] = float(getattr(item_obj, "duration", 0) or 0)
+
+        # URI & Image
+        res["uri"] = getattr(item_obj, "uri", "")
+        res["image"] = getattr(item_obj, "image_url", None) or getattr(item_obj, "image", None)
+
+        # Provider
+        prov = getattr(item_obj, "provider", "") or getattr(item_obj, "provider_domain", "")
+        if prov:
+            res["provider"] = str(prov).lower()
+
+        # Check media_item wrapper if present
+        m_item = getattr(item_obj, "media_item", None)
+        if m_item:
+            if not res["title"]:
+                res["title"] = getattr(m_item, "name", "") or getattr(m_item, "title", "")
+            if not res["artist"]:
+                m_artists = getattr(m_item, "artists", [])
+                if isinstance(m_artists, list):
+                    res["artist"] = ", ".join(getattr(a, "name", str(a)) for a in m_artists)
+                elif m_artists:
+                    res["artist"] = str(m_artists)
+            if not res["album"] and getattr(m_item, "album", None):
+                res["album"] = getattr(m_item.album, "name", str(m_item.album))
+            if not res["duration"]:
+                res["duration"] = float(getattr(m_item, "duration", 0) or 0)
+            if not res["uri"]:
+                res["uri"] = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
+            if not res["image"]:
+                res["image"] = getattr(m_item, "image", None)
+            if not res["provider"]:
+                res["provider"] = str(getattr(m_item, "provider", "")).lower()
+
+        # Fallback to item_id if uri is missing
+        if not res["uri"]:
+            item_id = getattr(item_obj, "item_id", None) or getattr(item_obj, "id", None)
+            if item_id:
+                res["uri"] = f"media-source://mass/track/{item_id}"
+
+        # Inspect provider_mappings for direct file paths or provider streaming links
+        mappings_source = (
+            getattr(item_obj, "provider_mappings", None)
+            or (getattr(m_item, "provider_mappings", None) if m_item else None)
+        )
+        if mappings_source:
+            raw_mappings = list(mappings_source) if hasattr(mappings_source, "__iter__") else [mappings_source]
+            for m in raw_mappings:
+                m_prov = str(
+                    getattr(m, "provider_domain", "")
+                    or getattr(m, "provider", "")
+                    or (m.get("provider_domain") if isinstance(m, dict) else "")
+                ).lower()
+                m_id = str(
+                    getattr(m, "item_id", "")
+                    or (m.get("item_id") if isinstance(m, dict) else "")
+                )
+                m_url = str(
+                    getattr(m, "url", "")
+                    or (m.get("url") if isinstance(m, dict) else "")
+                )
+                res["provider_mappings"].append({
+                    "provider": m_prov,
+                    "item_id": m_id,
+                    "url": m_url,
+                })
+                if not res["provider"] and m_prov:
+                    res["provider"] = m_prov
+
+                # Check if this mapping points to a local file or share path
+                if any(x in m_prov for x in ("filesystem", "file", "smb", "nfs", "webdav", "local")):
+                    if m_id and (
+                        m_id.startswith(("/", "\\"))
+                        or ":" in m_id
+                        or any(m_id.lower().endswith(ext) for ext in (".mp3", ".flac", ".wav", ".m4a", ".ogg", ".aac"))
+                    ):
+                        res["file_path"] = m_id
+
+        # Determine human-readable provider label
+        p_str = (res["provider"] + " " + res["uri"]).lower()
+        if "plex" in p_str:
+            res["provider_label"] = "Plex"
+        elif "jellyfin" in p_str:
+            res["provider_label"] = "Jellyfin"
+        elif any(x in p_str for x in ("subsonic", "opensubsonic", "navidrome", "gonic", "airsonic")):
+            res["provider_label"] = "Subsonic / Navidrome"
+        elif "emby" in p_str:
+            res["provider_label"] = "Emby"
+        elif any(x in p_str for x in ("filesystem", "file://", "smb://", "nfs://", "webdav://", "local")):
+            res["provider_label"] = "Lokale Datei (SMB/Disk)"
+        else:
+            res["provider_label"] = "Music Assistant"
+
+        return res
 
     def _get_mass_client(self) -> Optional[Any]:
         """Retrieve the official MusicAssistantClient instance from Home Assistant."""
@@ -111,30 +240,10 @@ class MusicAssistantHelper:
 
                 # Check current_media on player
                 cur_media = getattr(p, "current_media", None) or getattr(p, "media", None)
-                title = ""
-                artist = ""
-                album = ""
-                duration = 0.0
-                uri = ""
-                image = None
-
-                if cur_media:
-                    title = getattr(cur_media, "title", "") or getattr(cur_media, "name", "")
-                    artist = getattr(cur_media, "artist", "")
-                    album = getattr(cur_media, "album", "")
-                    duration = float(getattr(cur_media, "duration", 0) or 0)
-                    uri = getattr(cur_media, "uri", "")
-                    m_item = getattr(cur_media, "media_item", None)
-                    if not uri and m_item:
-                        uri = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
-                    if not uri:
-                        item_id = getattr(cur_media, "item_id", None)
-                        if item_id:
-                            uri = f"media-source://mass/track/{item_id}"
-                    image = getattr(cur_media, "image_url", None) or getattr(cur_media, "image", None)
+                details = self._extract_item_details(cur_media)
 
                 # Check player_queues for active item if not on player directly
-                if not title and hasattr(client, "player_queues"):
+                if not details["title"] and hasattr(client, "player_queues"):
                     q = None
                     try:
                         q_ctrl = client.player_queues
@@ -151,26 +260,7 @@ class MusicAssistantHelper:
                         pass
 
                     if q and getattr(q, "current_item", None):
-                        c_item = q.current_item
-                        title = getattr(c_item, "name", "") or getattr(c_item, "title", "")
-                        artists = getattr(c_item, "artists", [])
-                        if isinstance(artists, list):
-                            artist = ", ".join(getattr(a, "name", str(a)) for a in artists)
-                        else:
-                            artist = str(artists)
-                        album_obj = getattr(c_item, "album", None)
-                        if album_obj:
-                            album = getattr(album_obj, "name", str(album_obj))
-                        duration = float(getattr(c_item, "duration", 0) or 0)
-                        uri = getattr(c_item, "uri", "")
-                        m_item = getattr(c_item, "media_item", None)
-                        if not uri and m_item:
-                            uri = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
-                        if not uri:
-                            item_id = getattr(c_item, "item_id", None)
-                            if item_id:
-                                uri = f"media-source://mass/track/{item_id}"
-                        image = getattr(c_item, "image", None)
+                        details = self._extract_item_details(q.current_item)
 
                 seen_ids.add(p_id)
                 seen_ids.add(display_name.lower())
@@ -181,14 +271,18 @@ class MusicAssistantHelper:
                     "player_entity_id": entity_id,
                     "player_name": display_name,
                     "state": state,
-                    "title": title or "Bereit (Music Assistant)",
-                    "artist": artist,
-                    "album": album,
-                    "duration": duration,
-                    "media_content_id": uri or f"media-source://mass/player/{p_id}",
-                    "image": image,
-                    "has_track": bool(title),
+                    "title": details["title"] or "Bereit (Music Assistant)",
+                    "artist": details["artist"],
+                    "album": details["album"],
+                    "duration": details["duration"],
+                    "media_content_id": details["uri"] or f"media-source://mass/player/{p_id}",
+                    "image": details["image"],
+                    "has_track": bool(details["title"]),
                     "is_mass": True,
+                    "provider": details["provider"],
+                    "provider_label": details["provider_label"],
+                    "file_path": details["file_path"],
+                    "provider_mappings": details["provider_mappings"],
                 })
 
         # 2. Inspect client.player_queues (catch any standalone queues)
@@ -226,36 +320,7 @@ class MusicAssistantHelper:
 
                 current_item = getattr(q, "current_item", None)
                 state = str(getattr(q, "state", "idle")).lower()
-
-                title = ""
-                artist = ""
-                album = ""
-                duration = 0.0
-                uri = ""
-                image = None
-
-                if current_item:
-                    title = getattr(current_item, "name", "") or getattr(current_item, "title", "")
-                    artists = getattr(current_item, "artists", [])
-                    if isinstance(artists, list):
-                        artist = ", ".join(getattr(a, "name", str(a)) for a in artists)
-                    else:
-                        artist = str(artists)
-
-                    album_obj = getattr(current_item, "album", None)
-                    if album_obj:
-                        album = getattr(album_obj, "name", str(album_obj))
-
-                    duration = float(getattr(current_item, "duration", 0) or 0)
-                    uri = getattr(current_item, "uri", "")
-                    m_item = getattr(current_item, "media_item", None)
-                    if not uri and m_item:
-                        uri = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
-                    if not uri:
-                        item_id = getattr(current_item, "item_id", None)
-                        if item_id:
-                            uri = f"media-source://mass/track/{item_id}"
-                    image = getattr(current_item, "image", None)
+                details = self._extract_item_details(current_item)
 
                 entity_id = f"media_player.mass_{queue_id}" if not str(queue_id).startswith("media_player.") else queue_id
                 results.append({
@@ -263,14 +328,18 @@ class MusicAssistantHelper:
                     "player_entity_id": entity_id,
                     "player_name": display_name or f"Music Assistant ({queue_id})",
                     "state": state,
-                    "title": title or "Bereit (Music Assistant)",
-                    "artist": artist,
-                    "album": album,
-                    "duration": duration,
-                    "media_content_id": uri or f"media-source://mass/player/{queue_id}",
-                    "image": image,
-                    "has_track": bool(title),
+                    "title": details["title"] or "Bereit (Music Assistant)",
+                    "artist": details["artist"],
+                    "album": details["album"],
+                    "duration": details["duration"],
+                    "media_content_id": details["uri"] or f"media-source://mass/player/{queue_id}",
+                    "image": details["image"],
+                    "has_track": bool(details["title"]),
                     "is_mass": True,
+                    "provider": details["provider"],
+                    "provider_label": details["provider_label"],
+                    "file_path": details["file_path"],
+                    "provider_mappings": details["provider_mappings"],
                 })
 
         return results
@@ -645,6 +714,21 @@ class MusicAssistantHelper:
             seen_ids.add(state.entity_id)
             seen_ids.add(friendly_name.lower())
 
+            provider_label = "HA Player"
+            if is_mass:
+                provider_label = "Music Assistant"
+            p_check = (state.entity_id + " " + (media_content_id or "") + " " + (friendly_name or "")).lower()
+            if "plex" in p_check:
+                provider_label = "Plex"
+            elif "jellyfin" in p_check:
+                provider_label = "Jellyfin"
+            elif any(x in p_check for x in ("subsonic", "opensubsonic", "navidrome", "gonic", "airsonic")):
+                provider_label = "Subsonic / Navidrome"
+            elif any(x in p_check for x in ("filesystem", "file", "smb", "nfs", "webdav", "local")):
+                provider_label = "Lokale Datei (SMB/Disk)"
+            elif "emby" in p_check:
+                provider_label = "Emby"
+
             if title:
                 active.append({
                     "player_entity_id": state.entity_id,
@@ -658,6 +742,7 @@ class MusicAssistantHelper:
                     "image": attrs.get("entity_picture"),
                     "has_track": True,
                     "is_mass": is_mass,
+                    "provider_label": provider_label,
                 })
             else:
                 # Include all players so the user can always see and select their local or desired player!
@@ -673,6 +758,7 @@ class MusicAssistantHelper:
                     "image": None,
                     "has_track": False,
                     "is_mass": is_mass,
+                    "provider_label": provider_label,
                 })
 
         # Sort priority: has_track first, then playing > paused > idle > other, and is_mass first
@@ -828,7 +914,18 @@ class MusicAssistantHelper:
             return None
 
     async def async_resolve_media(self, media_content_id: str) -> Optional[Dict[str, Any]]:
-        """Resolve media identifier to a playable/streamable audio URL."""
+        """Resolve any media identifier or music source to a playable/streamable audio URL.
+
+        Supports all local and self-hosted Music Assistant sources:
+        - Local Filesystem & Direct disk files (/media, /share, /config/www, file://)
+        - Network Shares (SMB / CIFS, NFS, WebDAV)
+        - Plex Media Server
+        - Jellyfin Media Server
+        - Subsonic / OpenSubsonic (Navidrome, Gonic, Airsonic)
+        - Emby Media Server
+        - DLNA / UPnP Media Servers
+        - Music Assistant Unified Library & Queue Flow Stream
+        """
         if not media_content_id:
             return None
 
@@ -848,7 +945,20 @@ class MusicAssistantHelper:
                 "duration": 0.0,
             }
 
-        # 3. Check if this is an active player reference
+        # 3. Direct local file on disk or file:// URI
+        raw_disk_path = media_content_id
+        if raw_disk_path.startswith("file://"):
+            raw_disk_path = unquote(raw_disk_path[7:])
+        if os.path.isfile(raw_disk_path):
+            import mimetypes
+            content_type, _ = mimetypes.guess_type(raw_disk_path)
+            return {
+                "url": f"/api/lightshow/media/proxy?file={quote(raw_disk_path)}",
+                "mime_type": content_type or "audio/mpeg",
+                "duration": 0.0,
+            }
+
+        # 4. Check active player / queue references
         target_track = None
         for a in self.get_active_tracks():
             if (
@@ -861,11 +971,44 @@ class MusicAssistantHelper:
 
         track_duration = float(target_track.get("duration", 0.0)) if target_track else 0.0
 
+        # Check if target track already knows a local file path
+        if target_track and target_track.get("file_path"):
+            f_path = target_track["file_path"]
+            if os.path.isfile(f_path):
+                import mimetypes
+                c_type, _ = mimetypes.guess_type(f_path)
+                return {
+                    "url": f"/api/lightshow/media/proxy?file={quote(f_path)}",
+                    "mime_type": c_type or "audio/mpeg",
+                    "duration": track_duration,
+                }
+
+        # Check provider_mappings on target_track for direct URLs or files
+        if target_track and target_track.get("provider_mappings"):
+            for m in target_track["provider_mappings"]:
+                m_url = m.get("url")
+                if m_url and m_url.startswith(("http://", "https://")):
+                    return {
+                        "url": m_url,
+                        "mime_type": "audio/mpeg",
+                        "duration": track_duration,
+                    }
+                m_file = m.get("item_id")
+                if m_file and os.path.isfile(m_file):
+                    import mimetypes
+                    c_type, _ = mimetypes.guess_type(m_file)
+                    return {
+                        "url": f"/api/lightshow/media/proxy?file={quote(m_file)}",
+                        "mime_type": c_type or "audio/mpeg",
+                        "duration": track_duration,
+                    }
+
+        # If active track has inner ID, attempt recursion
         if target_track and target_track.get("media_content_id") and target_track["media_content_id"] != media_content_id:
             inner_id = target_track["media_content_id"]
             if not inner_id.startswith("media-source://mass/player/"):
                 resolved_inner = await self.async_resolve_media(inner_id)
-                if resolved_inner:
+                if resolved_inner and resolved_inner.get("url"):
                     if not resolved_inner.get("duration") and track_duration:
                         resolved_inner["duration"] = track_duration
                     return resolved_inner
@@ -877,7 +1020,7 @@ class MusicAssistantHelper:
         elif self.get_players():
             target_player = self.get_players()[0].get("entity_id")
 
-        # 4. Check if player entity state currently has a direct playable URL
+        # 5. Check if player entity state currently has a direct playable URL
         if target_player:
             player_state = self.hass.states.get(target_player)
             if player_state and player_state.attributes:
@@ -889,27 +1032,126 @@ class MusicAssistantHelper:
                         "duration": track_duration,
                     }
 
-        # 5. Try Home Assistant media_source resolution with smart candidate variations (including Plex)
+        # 6. Normalize URI scheme and extract clean ID / path across all local providers
+        clean_id = str(media_content_id)
+        provider_hint = "mass"
+        for prefix in (
+            "plex://track/", "plex://",
+            "jellyfin://track/", "jellyfin://item/", "jellyfin://",
+            "emby://track/", "emby://item/", "emby://",
+            "subsonic://track/", "subsonic://",
+            "opensubsonic://track/", "opensubsonic://",
+            "navidrome://track/", "navidrome://",
+            "filesystem://track/", "filesystem://",
+            "file://",
+            "smb://", "nfs://", "webdav://",
+            "media-source://mass/track/", "media-source://mass/",
+            "media-source://plex/track/", "media-source://plex/",
+            "media-source://jellyfin/track/", "media-source://jellyfin/",
+            "media-source://subsonic/track/", "media-source://subsonic/",
+            "media-source://opensubsonic/track/", "media-source://opensubsonic/",
+            "media-source://emby/track/", "media-source://emby/",
+            "media-source://media_source/local/", "media-source://media_source/",
+            "media-source://",
+            "library://track/", "library://",
+            "/",
+        ):
+            if clean_id.startswith(prefix):
+                if "plex" in prefix:
+                    provider_hint = "plex"
+                elif "jellyfin" in prefix:
+                    provider_hint = "jellyfin"
+                elif any(x in prefix for x in ("subsonic", "opensubsonic", "navidrome")):
+                    provider_hint = "subsonic"
+                elif "emby" in prefix:
+                    provider_hint = "emby"
+                elif any(x in prefix for x in ("filesystem", "file", "smb", "nfs", "webdav", "local")):
+                    provider_hint = "filesystem"
+                clean_id = clean_id[len(prefix):]
+                break
+
+        # Check standard HA file storage directories for filesystem / network share items
+        candidate_paths = [
+            clean_id,
+            f"/media/{clean_id}",
+            f"/share/{clean_id}",
+            f"/config/www/{clean_id}",
+            f"/media/music/{clean_id}",
+            f"/share/music/{clean_id}",
+        ]
+        for p in candidate_paths:
+            if os.path.isfile(p):
+                import mimetypes
+                c_type, _ = mimetypes.guess_type(p)
+                return {
+                    "url": f"/api/lightshow/media/proxy?file={quote(p)}",
+                    "mime_type": c_type or "audio/mpeg",
+                    "duration": track_duration,
+                }
+
+        # 7. Try Home Assistant media_source resolution with multi-provider candidates
         try:
             from homeassistant.components import media_source
             from homeassistant.components.media_player import async_process_play_media_url
 
             candidates = [media_content_id]
-            clean_id = str(media_content_id)
-            for prefix in ("media-source://mass/", "media-source://", "plex://", "library://", "/"):
-                if clean_id.startswith(prefix):
-                    clean_id = clean_id[len(prefix):]
+            last_part = clean_id.split("/")[-1] if "/" in clean_id else clean_id
 
-            candidates.extend([
-                f"media-source://mass/{clean_id}",
-                f"media-source://mass/track/{clean_id}",
-                f"media-source://plex/{clean_id}",
-                f"media-source://media_source/local/{clean_id}",
-            ])
+            # Provider-specific priority candidates
+            if provider_hint == "plex":
+                candidates.extend([
+                    f"media-source://plex/{clean_id}",
+                    f"media-source://plex/track/{clean_id}",
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://mass/track/{clean_id}",
+                    f"media-source://plex/{last_part}",
+                ])
+            elif provider_hint == "jellyfin":
+                candidates.extend([
+                    f"media-source://jellyfin/{clean_id}",
+                    f"media-source://jellyfin/track/{clean_id}",
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://mass/track/{clean_id}",
+                    f"media-source://jellyfin/{last_part}",
+                ])
+            elif provider_hint == "subsonic":
+                candidates.extend([
+                    f"media-source://subsonic/{clean_id}",
+                    f"media-source://opensubsonic/{clean_id}",
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://mass/track/{clean_id}",
+                    f"media-source://subsonic/{last_part}",
+                ])
+            elif provider_hint == "emby":
+                candidates.extend([
+                    f"media-source://emby/{clean_id}",
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://mass/track/{clean_id}",
+                ])
+            elif provider_hint == "filesystem":
+                candidates.extend([
+                    f"media-source://media_source/local/{clean_id}",
+                    f"media-source://media_source/local/{last_part}",
+                    f"media-source://filesystem/{clean_id}",
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://mass/track/{clean_id}",
+                ])
+            else:
+                candidates.extend([
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://mass/track/{clean_id}",
+                    f"media-source://media_source/local/{clean_id}",
+                    f"media-source://plex/{clean_id}",
+                    f"media-source://jellyfin/{clean_id}",
+                    f"media-source://subsonic/{clean_id}",
+                ])
+
             if "/" in clean_id:
-                parts = clean_id.split("/")
-                candidates.append(f"media-source://mass/track/{parts[-1]}")
-                candidates.append(f"media-source://plex/{parts[-1]}")
+                candidates.append(f"media-source://mass/track/{last_part}")
+                candidates.append(f"media-source://plex/{last_part}")
+                candidates.append(f"media-source://jellyfin/{last_part}")
+                candidates.append(f"media-source://subsonic/{last_part}")
+                candidates.append(f"media-source://media_source/local/{last_part}")
 
             for cand in candidates:
                 for p_target in (target_player, None):
@@ -936,24 +1178,7 @@ class MusicAssistantHelper:
         except Exception as err:
             _LOGGER.debug("media_source resolution error for %s: %s", media_content_id, err)
 
-        # 6. Check Music Assistant client direct server flow (Queue Flow Mode)
-        server_url = self._get_mass_server_url()
-        if server_url:
-            queue_id = target_track.get("queue_id") if target_track else None
-            if not queue_id and "/player/" in media_content_id:
-                queue_id = media_content_id.split("/player/")[-1]
-            if not queue_id and target_player:
-                queue_id = target_player
-
-            if queue_id:
-                clean_qid = str(queue_id).replace("media_player.mass_", "").replace("media_player.", "")
-                return {
-                    "url": f"{server_url}/flow/{clean_qid}",
-                    "mime_type": "audio/flac",
-                    "duration": track_duration,
-                }
-
-        # 7. Check direct Home Assistant native Plex integration
+        # 8. Check direct Home Assistant native Plex integration
         try:
             if "plex" in self.hass.data:
                 plex_data = self.hass.data["plex"]
@@ -975,7 +1200,57 @@ class MusicAssistantHelper:
         except Exception as plex_err:
             _LOGGER.debug("Direct Plex resolution error: %s", plex_err)
 
-        # 8. Return graceful fallback with duration
+        # 9. Check direct Home Assistant native Jellyfin integration
+        try:
+            if "jellyfin" in self.hass.data:
+                jf_data = self.hass.data["jellyfin"]
+                if isinstance(jf_data, dict):
+                    for jf_entry in jf_data.values():
+                        jf_client = getattr(jf_entry, "client", jf_entry)
+                        host = getattr(jf_client, "host", "") or getattr(jf_client, "server_url", "")
+                        token = getattr(jf_client, "token", "") or getattr(jf_client, "api_key", "")
+                        item_id = clean_id.split("/")[-1]
+                        if host and token and item_id:
+                            jf_url = f"{host.rstrip('/')}/Audio/{item_id}/stream?static=true&api_key={token}"
+                            return {
+                                "url": jf_url,
+                                "mime_type": "audio/mpeg",
+                                "duration": track_duration,
+                            }
+        except Exception as jf_err:
+            _LOGGER.debug("Direct Jellyfin resolution error: %s", jf_err)
+
+        # 10. Check Music Assistant client direct server flow (Queue Flow Mode)
+        server_url = self._get_mass_server_url()
+        if server_url:
+            queue_id = target_track.get("queue_id") if target_track else None
+            if not queue_id and "/player/" in media_content_id:
+                queue_id = media_content_id.split("/player/")[-1]
+            if not queue_id and target_player:
+                queue_id = target_player
+
+            # If still no queue_id, check all queues in client.player_queues
+            client = self._get_mass_client()
+            if not queue_id and client and hasattr(client, "player_queues"):
+                q_ctrl = client.player_queues
+                try:
+                    all_q = list(q_ctrl.all()) if hasattr(q_ctrl, "all") and callable(q_ctrl.all) else (
+                        list(q_ctrl.queues.values()) if hasattr(q_ctrl, "queues") and isinstance(q_ctrl.queues, dict) else []
+                    )
+                    if all_q:
+                        queue_id = getattr(all_q[0], "queue_id", None) or getattr(all_q[0], "player_id", None)
+                except Exception:
+                    pass
+
+            if queue_id:
+                clean_qid = str(queue_id).replace("media_player.mass_", "").replace("media_player.", "")
+                return {
+                    "url": f"{server_url}/flow/{clean_qid}",
+                    "mime_type": "audio/flac",
+                    "duration": track_duration,
+                }
+
+        # 11. Return graceful fallback with duration
         return {
             "url": None,
             "mime_type": "audio/mpeg",

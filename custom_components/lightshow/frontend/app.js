@@ -543,7 +543,15 @@ class LightShowStudio {
           else if (p.state === "idle") stateLabel = "⏹ Zuletzt gespielt";
           else if (!hasTrack) stateLabel = "Bereit";
 
-          let typeBadge = p.is_mass ? "🎵 Music Assistant" : "🔊 HA Player";
+          let typeBadge = p.provider_label || (p.is_mass ? "Music Assistant" : "HA Player");
+          if (p.provider_label === "Plex") typeBadge = "🎬 Plex";
+          else if (p.provider_label === "Jellyfin") typeBadge = "🍿 Jellyfin";
+          else if (p.provider_label === "Subsonic / Navidrome") typeBadge = "📻 Navidrome / Subsonic";
+          else if (p.provider_label === "Lokale Datei (SMB/Disk)") typeBadge = "📁 Lokale Datei (SMB/Disk)";
+          else if (p.provider_label === "Emby") typeBadge = "🍿 Emby";
+          else if (p.is_mass) typeBadge = "🎵 Music Assistant";
+          else typeBadge = "🔊 HA Player";
+
           const lowerName = (p.player_name || "").toLowerCase();
           if (lowerName.includes("web") || lowerName.includes("device") || lowerName.includes("browser") || lowerName.includes("lokal") || lowerName.includes("sendspin")) {
             typeBadge = "💻 Lokaler Player (MASS)";
@@ -2006,6 +2014,27 @@ data:
     } else {
       // --- STUDIO (BROWSER) MODUS ---
       // Vorschau direkt im Browser / PC - Lautsprecher im Raum bleibt KOMPLETT stumm!
+      if (!this.dom.audioPlayer.src && !this.currentShow.audio.stream_url && this.currentShow.audio.mass_uri) {
+        // Attempt on-demand resolve of Music Assistant / local stream URL
+        try {
+          const res = await fetch(`${this.apiBase}/media/resolve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ media_content_id: this.currentShow.audio.mass_uri }),
+          });
+          const data = await res.json();
+          if (data && data.success && data.url) {
+            this.currentShow.audio.stream_url = data.url;
+            this.dom.audioPlayer.src = data.url;
+            if (data.duration && data.duration > 0 && !this.currentShow.duration) {
+              this.currentShow.duration = data.duration;
+            }
+          }
+        } catch (e) {
+          console.warn("On-demand stream resolve warning:", e);
+        }
+      }
+
       if (!this.dom.audioPlayer.src && this.currentShow.audio.stream_url) {
         this.dom.audioPlayer.src = this.currentShow.audio.stream_url;
       }
@@ -2019,9 +2048,9 @@ data:
         }
       } else {
         alert(
-          "Hinweis: Für die Audio-Wiedergabe und Waveform im Studio wird eine lokale MP3-Audiodatei benötigt.\n\n" +
-          "Klicke oben auf '➕ MP3 laden' oder ziehe deine MP3-Datei per Drag & Drop in die Zeitleiste.\n\n" +
-          "(Die Live-Ausgabe auf deinem Lautsprecher funktioniert bereits über 'Live (Lautsprecher)')."
+          "Hinweis: Für die direkte Browser-Wiedergabe konnte noch kein Audio-Stream ermittelt werden.\n\n" +
+          "• Falls der Song über Music Assistant (Plex, Jellyfin, Navidrome oder SMB/Lokale Datei) läuft: Starte die Wiedergabe kurz auf deinem Lautsprecher und klicke auf '⚡ Vom Player übernehmen'.\n" +
+          "• Oder lade oben per '➕ MP3 laden' direkt deine Audiodatei hoch."
         );
         return;
       }
