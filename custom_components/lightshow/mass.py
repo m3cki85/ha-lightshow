@@ -57,15 +57,25 @@ class MusicAssistantHelper:
         if players_controller:
             raw_players = []
             try:
-                if hasattr(players_controller, "all"):
-                    attr = getattr(players_controller, "all")
-                    raw_players = list(attr()) if callable(attr) else (list(attr.values()) if isinstance(attr, dict) else list(attr))
+                if hasattr(players_controller, "all") and callable(getattr(players_controller, "all")):
+                    raw_players = list(players_controller.all())
+                elif hasattr(players_controller, "players"):
+                    p_attr = getattr(players_controller, "players")
+                    raw_players = list(p_attr.values()) if isinstance(p_attr, dict) else list(p_attr)
+                elif hasattr(players_controller, "_players"):
+                    raw_players = list(getattr(players_controller, "_players").values())
                 elif isinstance(players_controller, dict):
                     raw_players = list(players_controller.values())
                 else:
                     raw_players = list(players_controller)
             except Exception as err:
                 _LOGGER.debug("Error retrieving client.players: %s", err)
+
+            if not raw_players:
+                try:
+                    raw_players = list(players_controller)
+                except Exception:
+                    pass
 
             for p in raw_players:
                 p_id = str(getattr(p, "player_id", "") or "")
@@ -75,7 +85,7 @@ class MusicAssistantHelper:
                 state = str(getattr(p, "state", "idle")).lower()
 
                 # Check current_media on player
-                cur_media = getattr(p, "current_media", None)
+                cur_media = getattr(p, "current_media", None) or getattr(p, "media", None)
                 title = ""
                 artist = ""
                 album = ""
@@ -89,6 +99,13 @@ class MusicAssistantHelper:
                     album = getattr(cur_media, "album", "")
                     duration = float(getattr(cur_media, "duration", 0) or 0)
                     uri = getattr(cur_media, "uri", "")
+                    m_item = getattr(cur_media, "media_item", None)
+                    if not uri and m_item:
+                        uri = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
+                    if not uri:
+                        item_id = getattr(cur_media, "item_id", None)
+                        if item_id:
+                            uri = f"media-source://mass/track/{item_id}"
                     image = getattr(cur_media, "image_url", None) or getattr(cur_media, "image", None)
 
                 # Check player_queues for active item if not on player directly
@@ -97,10 +114,14 @@ class MusicAssistantHelper:
                     try:
                         q_ctrl = client.player_queues
                         active_source = getattr(p, "active_source", None) or p_id
-                        if hasattr(q_ctrl, "get"):
+                        if hasattr(q_ctrl, "get") and callable(q_ctrl.get):
                             q = q_ctrl.get(active_source) or q_ctrl.get(p_id)
                         elif isinstance(q_ctrl, dict):
                             q = q_ctrl.get(active_source) or q_ctrl.get(p_id)
+                        elif hasattr(q_ctrl, "queues"):
+                            q = q_ctrl.queues.get(active_source) or q_ctrl.queues.get(p_id)
+                        elif hasattr(q_ctrl, "_queues"):
+                            q = q_ctrl._queues.get(active_source) or q_ctrl._queues.get(p_id)
                     except Exception:
                         pass
 
@@ -117,6 +138,13 @@ class MusicAssistantHelper:
                             album = getattr(album_obj, "name", str(album_obj))
                         duration = float(getattr(c_item, "duration", 0) or 0)
                         uri = getattr(c_item, "uri", "")
+                        m_item = getattr(c_item, "media_item", None)
+                        if not uri and m_item:
+                            uri = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
+                        if not uri:
+                            item_id = getattr(c_item, "item_id", None)
+                            if item_id:
+                                uri = f"media-source://mass/track/{item_id}"
                         image = getattr(c_item, "image", None)
 
                 seen_ids.add(p_id)
@@ -143,15 +171,25 @@ class MusicAssistantHelper:
         if queues_controller:
             raw_queues = []
             try:
-                if hasattr(queues_controller, "all"):
-                    attr = getattr(queues_controller, "all")
-                    raw_queues = list(attr()) if callable(attr) else (list(attr.values()) if isinstance(attr, dict) else list(attr))
+                if hasattr(queues_controller, "all") and callable(getattr(queues_controller, "all")):
+                    raw_queues = list(queues_controller.all())
+                elif hasattr(queues_controller, "queues"):
+                    q_attr = getattr(queues_controller, "queues")
+                    raw_queues = list(q_attr.values()) if isinstance(q_attr, dict) else list(q_attr)
+                elif hasattr(queues_controller, "_queues"):
+                    raw_queues = list(getattr(queues_controller, "_queues").values())
                 elif isinstance(queues_controller, dict):
                     raw_queues = list(queues_controller.values())
                 else:
                     raw_queues = list(queues_controller)
             except Exception as err:
                 _LOGGER.debug("Error retrieving client.player_queues: %s", err)
+
+            if not raw_queues:
+                try:
+                    raw_queues = list(queues_controller)
+                except Exception:
+                    pass
 
             for q in raw_queues:
                 queue_id = str(getattr(q, "queue_id", None) or getattr(q, "player_id", "") or "")
@@ -185,6 +223,13 @@ class MusicAssistantHelper:
 
                     duration = float(getattr(current_item, "duration", 0) or 0)
                     uri = getattr(current_item, "uri", "")
+                    m_item = getattr(current_item, "media_item", None)
+                    if not uri and m_item:
+                        uri = getattr(m_item, "uri", "") or getattr(m_item, "item_id", "")
+                    if not uri:
+                        item_id = getattr(current_item, "item_id", None)
+                        if item_id:
+                            uri = f"media-source://mass/track/{item_id}"
                     image = getattr(current_item, "image", None)
 
                 entity_id = f"media_player.mass_{queue_id}" if not str(queue_id).startswith("media_player.") else queue_id
@@ -283,6 +328,17 @@ class MusicAssistantHelper:
     ) -> bool:
         """Start media playback on the specified player via MASS or media_player service."""
         try:
+            # If media_id is a player reference or matches the player, trigger media_play (resume/start)
+            if str(media_id).startswith("media-source://mass/player/") or media_id == player_entity_id:
+                await self.hass.services.async_call(
+                    "media_player",
+                    "media_play",
+                    {"entity_id": player_entity_id},
+                    blocking=False,
+                )
+                _LOGGER.info("Called media_player.media_play for %s (player reference)", player_entity_id)
+                return True
+
             # Check MASS service first if media or player is MASS
             for s_domain in ("mass", "music_assistant"):
                 if self.hass.services.has_service(s_domain, "play_media"):
@@ -583,10 +639,52 @@ class MusicAssistantHelper:
 
     async def async_resolve_media(self, media_content_id: str) -> Optional[Dict[str, Any]]:
         """Resolve media identifier to a playable/streamable audio URL."""
+        if not media_content_id:
+            return None
+
+        # 1. Direct HTTP/HTTPS URL
+        if media_content_id.startswith(("http://", "https://")):
+            return {
+                "url": media_content_id,
+                "mime_type": "audio/mpeg",
+                "duration": 0.0,
+            }
+
+        # 2. Local LightShow upload
+        if media_content_id.startswith("/api/lightshow/audio/"):
+            return {
+                "url": media_content_id,
+                "mime_type": "audio/mpeg",
+                "duration": 0.0,
+            }
+
+        # 3. Check if this is a player reference (e.g. media-source://mass/player/{id} or media_player.xxx)
+        target_track = None
+        for a in self.get_active_tracks():
+            if (
+                media_content_id in (a.get("media_content_id"), a.get("player_entity_id"), a.get("queue_id"))
+                or f"media-source://mass/player/{a.get('queue_id')}" == media_content_id
+                or f"media-source://mass/player/{a.get('player_entity_id')}" == media_content_id
+            ):
+                target_track = a
+                break
+
+        track_duration = float(target_track.get("duration", 0.0)) if target_track else 0.0
+
+        if target_track and target_track.get("media_content_id") and target_track["media_content_id"] != media_content_id:
+            inner_id = target_track["media_content_id"]
+            if not inner_id.startswith("media-source://mass/player/"):
+                resolved_inner = await self.async_resolve_media(inner_id)
+                if resolved_inner:
+                    if not resolved_inner.get("duration") and track_duration:
+                        resolved_inner["duration"] = track_duration
+                    return resolved_inner
+
+        # 4. Try Home Assistant media_source resolution
         try:
             from homeassistant.components import media_source
 
-            # First attempt: direct resolve
+            # Direct resolve
             try:
                 resolved = await media_source.async_resolve_media(
                     self.hass,
@@ -597,26 +695,36 @@ class MusicAssistantHelper:
                     return {
                         "url": resolved.url,
                         "mime_type": resolved.mime_type,
+                        "duration": track_duration,
                     }
             except Exception as direct_err:
                 _LOGGER.debug("Direct resolve of %s failed: %s, trying prefix fallback", media_content_id, direct_err)
 
-            # Fallback attempt: if not starting with media-source://, try media-source://mass/
+            # Fallback attempts with prefixes
             if not media_content_id.startswith("media-source://"):
                 clean_id = media_content_id.lstrip("/")
-                fallback_id = f"media-source://mass/{clean_id}"
-                resolved = await media_source.async_resolve_media(
-                    self.hass,
-                    fallback_id,
-                    None,
-                )
-                if resolved and resolved.url:
-                    return {
-                        "url": resolved.url,
-                        "mime_type": resolved.mime_type,
-                    }
+                for prefix in ("media-source://mass/", "media-source://media_source/local/"):
+                    try:
+                        resolved = await media_source.async_resolve_media(
+                            self.hass,
+                            f"{prefix}{clean_id}",
+                            None,
+                        )
+                        if resolved and resolved.url:
+                            return {
+                                "url": resolved.url,
+                                "mime_type": resolved.mime_type,
+                                "duration": track_duration,
+                            }
+                    except Exception:
+                        pass
 
-            return None
         except Exception as err:
-            _LOGGER.error("Failed to resolve media %s: %s", media_content_id, err)
-            return None
+            _LOGGER.debug("media_source resolution error for %s: %s", media_content_id, err)
+
+        # 5. Return graceful fallback with duration (even if direct stream URL is not available)
+        return {
+            "url": None,
+            "mime_type": None,
+            "duration": track_duration,
+        }

@@ -373,6 +373,8 @@ class LightShowStudio {
           const songName = found.artist ? `${found.artist} - ${found.title}` : found.title;
           const conf = confirm(`Gefunden auf ausgewähltem Player '${found.player_name}':\n🎵 ${songName}\n\nMöchtest du diesen Song für deine LightShow übernehmen?`);
           if (conf) {
+            this.currentShow.settings.default_player_entity_id = found.player_entity_id;
+            this.dom.playerSelect.value = found.player_entity_id;
             await this.selectMediaTrack({
               media_content_id: found.media_content_id,
               title: songName,
@@ -390,15 +392,15 @@ class LightShowStudio {
         const songName = p.artist ? `${p.artist} - ${p.title}` : p.title;
         const conf = confirm(`Gefunden auf '${p.player_name}':\n🎵 ${songName}\n\nMöchtest du diesen Song direkt für deine LightShow übernehmen?`);
         if (conf) {
+          if (p.player_entity_id) {
+            this.currentShow.settings.default_player_entity_id = p.player_entity_id;
+            this.dom.playerSelect.value = p.player_entity_id;
+          }
           await this.selectMediaTrack({
             media_content_id: p.media_content_id,
             title: songName,
             duration: p.duration,
           });
-          if (p.player_entity_id) {
-            this.currentShow.settings.default_player_entity_id = p.player_entity_id;
-            this.dom.playerSelect.value = p.player_entity_id;
-          }
           return;
         }
       }
@@ -456,6 +458,11 @@ class LightShowStudio {
           `;
 
           card.querySelector('[data-action="action-btn"]').addEventListener("click", async () => {
+            if (p.player_entity_id) {
+              this.currentShow.settings.default_player_entity_id = p.player_entity_id;
+              this.dom.playerSelect.value = p.player_entity_id;
+            }
+
             if (hasTrack) {
               await this.selectMediaTrack({
                 media_content_id: p.media_content_id,
@@ -464,12 +471,6 @@ class LightShowStudio {
               });
             } else {
               alert(`Lautsprecher '${p.player_name}' für die Show ausgewählt!\n\nStarte deinen gewünschten Song in Music Assistant auf diesem Lautsprecher und klicke dann auf '⚡ Vom Player übernehmen'.`);
-            }
-            if (p.player_entity_id) {
-              this.currentShow.settings.default_player_entity_id = p.player_entity_id;
-              this.dom.playerSelect.value = p.player_entity_id;
-            }
-            if (!hasTrack) {
               this.dom.mediaModal.classList.add("hidden");
             }
           });
@@ -719,6 +720,9 @@ class LightShowStudio {
     this.dom.mediaLoadingIndicator.textContent = `Lade "${item.title}"...`;
     this.dom.mediaLoadingIndicator.classList.remove("hidden");
 
+    let streamUrl = null;
+    let trackDuration = item.duration || 0;
+
     try {
       const res = await fetch(`${this.apiBase}/media/resolve`, {
         method: "POST",
@@ -726,27 +730,33 @@ class LightShowStudio {
         body: JSON.stringify({ media_content_id: item.media_content_id })
       });
       const data = await res.json();
-      this.dom.mediaLoadingIndicator.classList.add("hidden");
-
-      if (data.success && data.url) {
-        this.currentShow.audio.mass_uri = item.media_content_id;
-        this.currentShow.audio.title = item.title;
-        this.currentShow.audio.filename = item.title;
-        this.currentShow.audio.stream_url = data.url;
-        if (data.duration && data.duration > 0) {
-          this.currentShow.duration = data.duration;
-          this.currentShow.audio.duration = data.duration;
+      if (data && data.success) {
+        if (data.url) {
+          streamUrl = data.url;
         }
-
-        this.dom.mediaModal.classList.add("hidden");
-        this.renderShow();
-      } else {
-        alert("Konnte Stream-URL für diesen Song nicht auflösen: " + (data.error || "Unbekannter Fehler"));
+        if (data.duration && data.duration > 0) {
+          trackDuration = data.duration;
+        }
       }
     } catch (err) {
+      console.warn("Could not resolve stream URL for preview, using live mode:", err);
+    } finally {
       this.dom.mediaLoadingIndicator.classList.add("hidden");
-      alert("Fehler beim Auflösen des Songs: " + err.message);
     }
+
+    // Always accept the song into currentShow!
+    this.currentShow.audio.mass_uri = item.media_content_id;
+    this.currentShow.audio.title = item.title;
+    this.currentShow.audio.filename = item.title;
+    this.currentShow.audio.stream_url = streamUrl;
+
+    if (trackDuration > 0) {
+      this.currentShow.duration = trackDuration;
+      this.currentShow.audio.duration = trackDuration;
+    }
+
+    this.dom.mediaModal.classList.add("hidden");
+    this.renderShow();
   }
 
   async loadShowsList() {
@@ -802,21 +812,37 @@ class LightShowStudio {
     });
     if (this.currentShow.audio.stream_url) {
       this.dom.audioSelect.value = this.currentShow.audio.stream_url;
+    } else if (this.currentShow.audio.mass_uri) {
+      const opt = document.createElement("option");
+      opt.value = this.currentShow.audio.mass_uri;
+      opt.textContent = `🎵 ${this.currentShow.audio.title || "Music Assistant Stream"}`;
+      this.dom.audioSelect.appendChild(opt);
+      this.dom.audioSelect.value = this.currentShow.audio.mass_uri;
     }
   }
 
   renderShow() {
     // Show Header info
-    if (this.currentShow.audio.stream_url) {
-      this.dom.audioSelect.value = this.currentShow.audio.stream_url;
+    const hasAudio = !!(this.currentShow.audio.stream_url || this.currentShow.audio.mass_uri || this.currentShow.audio.filename);
+
+    if (hasAudio) {
+      this.renderAudioOptions();
       this.dom.audioTitleDisplay.textContent = this.currentShow.audio.title || this.currentShow.audio.filename || "Audiodatei geladen";
-      this.dom.audioStatusBadge.textContent = "Bereit";
+      this.dom.audioStatusBadge.textContent = this.currentShow.audio.stream_url ? "Bereit" : "Bereit (Stream)";
       this.dom.audioStatusBadge.classList.add("badge-wled");
-      this.loadAudioWaveform(this.currentShow.audio.stream_url, this.currentShow.duration || 30.0);
+      if (this.currentShow.audio.stream_url) {
+        this.loadAudioWaveform(this.currentShow.audio.stream_url, this.currentShow.duration || 30.0);
+      } else {
+        this.dom.audioPlayer.removeAttribute("src");
+        this.audioBuffer = null;
+      }
     } else {
+      this.renderAudioOptions();
       this.dom.audioTitleDisplay.textContent = "Kein Audio geladen";
       this.dom.audioStatusBadge.textContent = "Keine Datei";
       this.dom.audioStatusBadge.classList.remove("badge-wled");
+      this.dom.audioPlayer.removeAttribute("src");
+      this.audioBuffer = null;
     }
 
     if (this.currentShow.settings.default_player_entity_id) {
@@ -1426,11 +1452,23 @@ class LightShowStudio {
   // --- AUDIO & PROJECT SAVE / LOAD ---
 
   handleAudioSelect(url) {
+    if (!url) {
+      this.currentShow.audio.stream_url = null;
+      this.currentShow.audio.mass_uri = "";
+      this.currentShow.audio.filename = "";
+      this.currentShow.audio.title = "";
+      this.renderShow();
+      return;
+    }
+    if (url === this.currentShow.audio.mass_uri) {
+      return;
+    }
     this.currentShow.audio.stream_url = url;
     const file = this.audioFiles.find(f => f.url === url);
     if (file) {
       this.currentShow.audio.filename = file.filename;
       this.currentShow.audio.title = file.filename.replace(/\.[^/.]+$/, "");
+      this.currentShow.audio.mass_uri = "";
     }
     this.renderShow();
   }

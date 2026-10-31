@@ -362,9 +362,22 @@ class LightShowMediaResolveView(LightShowBaseView):
                     "url": proxy_url,
                     "raw_url": resolved["url"],
                     "mime_type": resolved.get("mime_type"),
-                    "duration": resolved.get("duration")
+                    "duration": resolved.get("duration", 0),
+                    "direct_stream_available": True,
                 })
-            return self.json({"success": False, "error": "Could not resolve stream URL"}, status_code=404)
+
+            # Stream URL could not be resolved directly for browser playback (e.g. Spotify, DRM, Echo Dot, external speaker).
+            # Return HTTP 200 with success: True so LightShow Studio adopts the track, duration, and title cleanly.
+            duration = resolved.get("duration", 0) if resolved else 0
+            return self.json({
+                "success": True,
+                "url": None,
+                "raw_url": None,
+                "mime_type": None,
+                "duration": duration,
+                "direct_stream_available": False,
+                "message": "Direct stream URL not available (live streaming via player)",
+            })
         except Exception as err:
             _LOGGER.error("Resolve media error: %s", err)
             return self.json({"success": False, "error": str(err)}, status_code=500)
