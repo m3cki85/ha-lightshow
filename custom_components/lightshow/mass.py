@@ -322,67 +322,210 @@ class MusicAssistantHelper:
     async def async_play_media(
         self,
         player_entity_id: str,
-        media_id: str,
-        media_type: str = "music",
-        enqueue: bool = False,
+        media_id: Optional[str] = None,
+        track_title: Optional[str] = None,
+        media_type: Optional[str] = None,
+        enqueue: str = "replace",
     ) -> bool:
-        """Start media playback on the specified player via MASS or media_player service."""
-        try:
-            # If media_id is a player reference or matches the player, trigger media_play (resume/start)
-            if str(media_id).startswith("media-source://mass/player/") or media_id == player_entity_id:
-                await self.hass.services.async_call(
-                    "media_player",
-                    "media_play",
-                    {"entity_id": player_entity_id},
-                    blocking=False,
-                )
-                _LOGGER.info("Called media_player.media_play for %s (player reference)", player_entity_id)
-                return True
+        """Start media playback on the specified player via Music Assistant or Home Assistant."""
+        if not player_entity_id:
+            _LOGGER.warning("async_play_media called without player_entity_id")
+            return False
 
-            # Check MASS service first if media or player is MASS
-            for s_domain in ("mass", "music_assistant"):
-                if self.hass.services.has_service(s_domain, "play_media"):
+        # 1. Determine best play target
+        play_target = None
+        if media_id and not str(media_id).startswith("media-source://mass/player/"):
+            play_target = media_id
+
+        # If media_id is a player reference or empty, check active tracks for real URI or title
+        if not play_target or str(play_target).startswith("media-source://mass/player/"):
+            for a in self.get_active_tracks():
+                if (
+                    player_entity_id in (a.get("player_entity_id"), a.get("queue_id"))
+                    or (media_id and media_id in (a.get("media_content_id"), a.get("player_entity_id"), a.get("queue_id")))
+                ):
+                    candidate_id = a.get("media_content_id")
+                    if candidate_id and not str(candidate_id).startswith("media-source://mass/player/"):
+                        play_target = candidate_id
+                        break
+                    if a.get("title") and not track_title:
+                        track_title = a.get("title")
+
+        # Fallback to track_title if no URI is available
+        if not play_target and track_title:
+            play_target = track_title
+
+        _LOGGER.info(
+            "async_play_media on %s with target: %s (original media_id: %s, title: %s)",
+            player_entity_id,
+            play_target,
+            media_id,
+            track_title,
+        )
+
+        # 2. Direct Music Assistant Client (native WebSocket protocol)
+        client = self._get_mass_client()
+        if client and hasattr(client, "player_queues") and hasattr(client.player_queues, "play_media"):
+            try:
+                queue_id = None
+                clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+                players_ctrl = getattr(client, "players", None)
+                if players_ctrl:
+                    raw_players = []
+                    if hasattr(players_ctrl, "all") and callable(players_ctrl.all):
+                        raw_players = list(players_ctrl.all())
+                    elif hasattr(players_ctrl, "players"):
+                        p_dict = players_ctrl.players
+                        raw_players = list(p_dict.values()) if isinstance(p_dict, dict) else list(p_dict)
+                    elif isinstance(players_ctrl, dict):
+                        raw_players = list(players_ctrl.values())
+                    elif hasattr(players_ctrl, "__iter__"):
+                        try:
+                            raw_players = list(players_ctrl)
+                        except Exception:
+                            pass
+
+                    for p in raw_players:
+                        p_id = str(getattr(p, "player_id", "") or "")
+                        disp = str(getattr(p, "display_name", "") or getattr(p, "name", "")).lower()
+                        if p_id == clean_id or disp == clean_id.lower() or f"media_player.mass_{p_id}" == player_entity_id:
+                            queue_id = getattr(p, "active_source", None) or p_id
+                            break
+
+                if not queue_id:
+                    queue_id = clean_id
+
+                if play_target:
+                    await client.player_queues.play_media(
+                        queue_id=queue_id,
+                        media=play_target,
+                        option="replace",
+                    )
+                    _LOGGER.info("Direct client.player_queues.play_media succeeded for queue '%s' with '%s'", queue_id, play_target)
+                    return True
+                else:
+                    if hasattr(client.player_queues, "resume"):
+                        await client.player_queues.resume(queue_id)
+                        _LOGGER.info("Direct client.player_queues.resume succeeded for queue '%s'", queue_id)
+                        return True
+                    elif hasattr(client.player_queues, "play"):
+                        await client.player_queues.play(queue_id)
+                        _LOGGER.info("Direct client.player_queues.play succeeded for queue '%s'", queue_id)
+                        return True
+
+            except Exception as client_err:
+                _LOGGER.debug("Direct client.player_queues call failed: %s, falling back to HA actions", client_err)
+
+        # 3. Official Home Assistant action `music_assistant.play_media` / `mass.play_media`
+        for s_domain in ("music_assistant", "mass"):
+            if self.hass.services.has_service(s_domain, "play_media"):
+                if play_target:
                     try:
                         await self.hass.services.async_call(
                             s_domain,
                             "play_media",
-                            {
-                                "entity_id": player_entity_id,
-                                "media_id": media_id,
-                                "media_type": media_type,
+                            service_data={
+                                "media_id": play_target,
+                                "enqueue": "replace",
                             },
+                            target={"entity_id": player_entity_id},
                             blocking=False,
                         )
-                        _LOGGER.info("Called %s.play_media for %s with %s", s_domain, player_entity_id, media_id)
+                        _LOGGER.info("Called %s.play_media with target %s for %s", s_domain, player_entity_id, play_target)
                         return True
                     except Exception as err:
-                        _LOGGER.debug("%s.play_media call failed: %s, trying next option", s_domain, err)
+                        _LOGGER.debug("%s.play_media with target failed: %s, trying legacy data format", s_domain, err)
+                        try:
+                            await self.hass.services.async_call(
+                                s_domain,
+                                "play_media",
+                                service_data={
+                                    "entity_id": player_entity_id,
+                                    "media_id": play_target,
+                                    "enqueue": "replace",
+                                },
+                                blocking=False,
+                            )
+                            _LOGGER.info("Called legacy %s.play_media for %s with %s", s_domain, player_entity_id, play_target)
+                            return True
+                        except Exception as leg_err:
+                            _LOGGER.debug("%s.play_media legacy format failed: %s", s_domain, leg_err)
 
-            # Universal standard media_player.play_media (works for Alexa / Echo Dot, Kiosk Assist, Cast, Sonos)
+        # 4. Standard Home Assistant `media_player.play_media`
+        if play_target:
+            try:
+                await self.hass.services.async_call(
+                    "media_player",
+                    "play_media",
+                    service_data={
+                        "media_content_id": play_target,
+                        "media_content_type": "music",
+                    },
+                    target={"entity_id": player_entity_id},
+                    blocking=False,
+                )
+                _LOGGER.info("Called media_player.play_media for %s with %s", player_entity_id, play_target)
+                return True
+            except Exception as err:
+                _LOGGER.debug("media_player.play_media failed: %s, trying without target wrapper", err)
+                try:
+                    await self.hass.services.async_call(
+                        "media_player",
+                        "play_media",
+                        service_data={
+                            "entity_id": player_entity_id,
+                            "media_content_id": play_target,
+                            "media_content_type": "music",
+                        },
+                        blocking=False,
+                    )
+                    return True
+                except Exception:
+                    pass
+
+        # 5. Last fallback: media_player.media_play (resume current playback)
+        try:
             await self.hass.services.async_call(
                 "media_player",
-                "play_media",
-                {
-                    "entity_id": player_entity_id,
-                    "media_content_id": media_id,
-                    "media_content_type": "music",
-                },
+                "media_play",
+                target={"entity_id": player_entity_id},
                 blocking=False,
             )
-            _LOGGER.info("Called media_player.play_media for %s with %s", player_entity_id, media_id)
+            _LOGGER.info("Called media_player.media_play for %s", player_entity_id)
             return True
-
         except Exception as err:
             _LOGGER.error("Failed to start playback on %s: %s", player_entity_id, err)
             return False
 
     async def async_stop_media(self, player_entity_id: str) -> bool:
         """Stop playback on player."""
+        client = self._get_mass_client()
+        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+        if client and hasattr(client, "player_queues") and hasattr(client.player_queues, "stop"):
+            try:
+                await client.player_queues.stop(clean_id)
+                return True
+            except Exception:
+                pass
+
+        for s_domain in ("music_assistant", "mass"):
+            if self.hass.services.has_service(s_domain, "stop"):
+                try:
+                    await self.hass.services.async_call(
+                        s_domain,
+                        "stop",
+                        target={"entity_id": player_entity_id},
+                        blocking=False,
+                    )
+                    return True
+                except Exception:
+                    pass
+
         try:
             await self.hass.services.async_call(
                 "media_player",
                 "media_stop",
-                {"entity_id": player_entity_id},
+                target={"entity_id": player_entity_id},
                 blocking=False,
             )
             return True
@@ -392,11 +535,33 @@ class MusicAssistantHelper:
 
     async def async_pause_media(self, player_entity_id: str) -> bool:
         """Pause playback on player."""
+        client = self._get_mass_client()
+        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+        if client and hasattr(client, "player_queues") and hasattr(client.player_queues, "pause"):
+            try:
+                await client.player_queues.pause(clean_id)
+                return True
+            except Exception:
+                pass
+
+        for s_domain in ("music_assistant", "mass"):
+            if self.hass.services.has_service(s_domain, "pause"):
+                try:
+                    await self.hass.services.async_call(
+                        s_domain,
+                        "pause",
+                        target={"entity_id": player_entity_id},
+                        blocking=False,
+                    )
+                    return True
+                except Exception:
+                    pass
+
         try:
             await self.hass.services.async_call(
                 "media_player",
                 "media_pause",
-                {"entity_id": player_entity_id},
+                target={"entity_id": player_entity_id},
                 blocking=False,
             )
             return True

@@ -104,6 +104,15 @@ class LightShowEngine:
             player_entity_id
             or settings.get("default_player_entity_id")
         )
+        if not self._player_entity_id:
+            for p in self.mass.get_active_tracks():
+                if p.get("player_entity_id"):
+                    self._player_entity_id = p["player_entity_id"]
+                    break
+            if not self._player_entity_id:
+                all_players = self.mass.get_players()
+                if all_players:
+                    self._player_entity_id = all_players[0].get("entity_id")
 
         # Determine duration
         audio_info = show_data.get("audio", {})
@@ -172,8 +181,8 @@ class LightShowEngine:
             if self._player_entity_id and self._current_show:
                 audio = self._current_show.get("audio", {})
                 media_id = audio.get("mass_uri") or audio.get("stream_url")
-                if media_id:
-                    await self.mass.async_play_media(self._player_entity_id, media_id)
+                track_title = audio.get("title") or audio.get("filename")
+                await self.mass.async_play_media(self._player_entity_id, media_id, track_title=track_title)
 
     async def async_test_cue(self, entity_id: str, cue: Dict[str, Any]) -> None:
         """Instantly apply a cue to a lamp (used for live preview in the studio editor)."""
@@ -238,18 +247,23 @@ class LightShowEngine:
         if self._player_entity_id and self._current_show:
             audio = self._current_show.get("audio", {})
             media_id = audio.get("mass_uri") or audio.get("stream_url")
-            if media_id:
+            track_title = audio.get("title") or audio.get("filename")
+            if media_id and str(media_id).startswith("/"):
                 # Convert relative path to absolute HTTP URL for smart speakers (Echo Dot, Cast, Sonos)
-                if str(media_id).startswith("/"):
-                    try:
-                        from homeassistant.helpers.network import get_url
-                        base_url = get_url(self.hass, allow_internal=True, allow_ip=True)
-                        media_id = f"{base_url}{media_id}"
-                    except Exception as err:
-                        _LOGGER.warning("Could not determine base URL for speaker audio: %s", err)
+                try:
+                    from homeassistant.helpers.network import get_url
+                    base_url = get_url(self.hass, allow_internal=True, allow_ip=True)
+                    media_id = f"{base_url}{media_id}"
+                except Exception as err:
+                    _LOGGER.warning("Could not determine base URL for speaker audio: %s", err)
 
-                _LOGGER.info("Starting audio playback on %s with: %s", self._player_entity_id, media_id)
-                await self.mass.async_play_media(self._player_entity_id, media_id)
+            _LOGGER.info(
+                "Starting audio playback on %s with media_id: %s, title: %s",
+                self._player_entity_id,
+                media_id,
+                track_title,
+            )
+            await self.mass.async_play_media(self._player_entity_id, media_id, track_title=track_title)
 
         t_start = loop.time() - start_offset
         cue_idx = 0
@@ -303,8 +317,8 @@ class LightShowEngine:
                         if self._player_entity_id and self._current_show:
                             audio = self._current_show.get("audio", {})
                             media_id = audio.get("mass_uri") or audio.get("stream_url")
-                            if media_id:
-                                await self.mass.async_play_media(self._player_entity_id, media_id)
+                            track_title = audio.get("title") or audio.get("filename")
+                            await self.mass.async_play_media(self._player_entity_id, media_id, track_title=track_title)
                     else:
                         _LOGGER.info("Lightshow '%s' finished naturally", self._current_show_id)
                         break

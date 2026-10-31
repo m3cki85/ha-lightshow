@@ -14,7 +14,7 @@ class LightShowStudio {
     
     this.zoom = 70; // px per second
     this.snap = 0.25; // seconds
-    this.playMode = "browser"; // "browser" or "speaker"
+    this.playMode = "speaker"; // "speaker" (default via Music Assistant) or "browser"
     this.currentTime = 0.0;
     this.isPlaying = false;
     this.isLooping = false;
@@ -375,6 +375,7 @@ class LightShowStudio {
           if (conf) {
             this.currentShow.settings.default_player_entity_id = found.player_entity_id;
             this.dom.playerSelect.value = found.player_entity_id;
+            this.setPlayMode("speaker");
             await this.selectMediaTrack({
               media_content_id: found.media_content_id,
               title: songName,
@@ -396,6 +397,7 @@ class LightShowStudio {
             this.currentShow.settings.default_player_entity_id = p.player_entity_id;
             this.dom.playerSelect.value = p.player_entity_id;
           }
+          this.setPlayMode("speaker");
           await this.selectMediaTrack({
             media_content_id: p.media_content_id,
             title: songName,
@@ -462,6 +464,7 @@ class LightShowStudio {
               this.currentShow.settings.default_player_entity_id = p.player_entity_id;
               this.dom.playerSelect.value = p.player_entity_id;
             }
+            this.setPlayMode("speaker");
 
             if (hasTrack) {
               await this.selectMediaTrack({
@@ -755,6 +758,7 @@ class LightShowStudio {
       this.currentShow.audio.duration = trackDuration;
     }
 
+    this.setPlayMode("speaker");
     this.dom.mediaModal.classList.add("hidden");
     this.renderShow();
   }
@@ -1677,17 +1681,27 @@ data:
   async play() {
     if (this.isPlaying) return;
 
-    if (this.playMode === "speaker") {
-      const selectedPlayer = this.dom.playerSelect.value;
+    let selectedPlayer = this.dom.playerSelect.value || this.currentShow.settings.default_player_entity_id;
+    const isMass = !!(this.currentShow.audio.mass_uri || selectedPlayer);
+
+    // If no player is selected yet, but we have players available, pick the first one automatically
+    if (!selectedPlayer && this.players && this.players.length > 0) {
+      selectedPlayer = this.players[0].entity_id;
+      this.dom.playerSelect.value = selectedPlayer;
+      this.currentShow.settings.default_player_entity_id = selectedPlayer;
+    }
+
+    const useSpeaker = (this.playMode === "speaker") || !this.dom.audioPlayer.src || isMass;
+
+    if (useSpeaker) {
       if (!selectedPlayer) {
-        alert("Bitte wähle oben einen Lautsprecher aus, bevor du die Live-Show startest!");
+        alert("Bitte wähle oben einen Lautsprecher aus, über den Music Assistant die Musik abspielen soll!");
         return;
       }
 
       this.currentShow.settings.default_player_entity_id = selectedPlayer;
       this.currentShow.settings.loop = this.isLooping;
 
-      // Send show_data directly so playback works even with brand new/unsaved shows
       const res = await fetch(`${this.apiBase}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1702,11 +1716,11 @@ data:
       });
       const data = await res.json();
       if (!data.success) {
-        alert("Fehler beim Starten der Live-Show: " + (data.error || "Unbekannter Fehler"));
+        alert("Fehler beim Starten der Wiedergabe: " + (data.error || "Unbekannter Fehler"));
         return;
       }
     } else {
-      // Studio Browser Preview
+      // Local MP3 Browser Preview
       if (this.dom.audioPlayer.src) {
         this.dom.audioPlayer.currentTime = this.currentTime;
         this.dom.audioPlayer.play().catch(e => console.warn(e));
@@ -1726,7 +1740,10 @@ data:
     this.dom.btnPlay.style.display = "flex";
     this.dom.btnPause.style.display = "none";
 
-    if (this.playMode === "speaker") {
+    const selectedPlayer = this.dom.playerSelect.value || this.currentShow.settings.default_player_entity_id;
+    const useSpeaker = (this.playMode === "speaker") || !this.dom.audioPlayer.src || !!this.currentShow.audio.mass_uri;
+
+    if (useSpeaker && selectedPlayer) {
       await fetch(`${this.apiBase}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1745,7 +1762,10 @@ data:
     this.dom.btnPlay.style.display = "flex";
     this.dom.btnPause.style.display = "none";
 
-    if (this.playMode === "speaker") {
+    const selectedPlayer = this.dom.playerSelect.value || this.currentShow.settings.default_player_entity_id;
+    const useSpeaker = (this.playMode === "speaker") || !this.dom.audioPlayer.src || !!this.currentShow.audio.mass_uri;
+
+    if (useSpeaker && selectedPlayer) {
       await fetch(`${this.apiBase}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
