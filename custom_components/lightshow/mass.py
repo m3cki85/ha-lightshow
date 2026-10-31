@@ -43,6 +43,31 @@ class MusicAssistantHelper:
                             return client
         return None
 
+    def _get_mass_server_url(self) -> Optional[str]:
+        """Get the base HTTP URL of the Music Assistant server."""
+        # 1. From client
+        client = self._get_mass_client()
+        if client:
+            url = (
+                getattr(client, "server_url", None)
+                or getattr(client, "_server_url", None)
+                or getattr(getattr(client, "connection", None), "server_url", None)
+            )
+            if url:
+                return str(url).rstrip("/")
+            ws_url = getattr(getattr(client, "connection", None), "ws_server_url", "")
+            if ws_url:
+                clean_ws = str(ws_url).replace("wss://", "https://").replace("ws://", "http://").replace("/ws", "")
+                return clean_ws.rstrip("/")
+
+        # 2. From config entries
+        for domain in ("music_assistant", "mass"):
+            for entry in self.hass.config_entries.async_entries(domain):
+                url = entry.data.get("url")
+                if url:
+                    return str(url).rstrip("/")
+        return None
+
     def get_mass_server_queues(self) -> List[Dict[str, Any]]:
         """Retrieve all active players and queues directly from Music Assistant client."""
         client = self._get_mass_client()
@@ -823,7 +848,7 @@ class MusicAssistantHelper:
                 "duration": 0.0,
             }
 
-        # 3. Check if this is a player reference (e.g. media-source://mass/player/{id} or media_player.xxx)
+        # 3. Check if this is an active player reference
         target_track = None
         for a in self.get_active_tracks():
             if (
@@ -852,18 +877,39 @@ class MusicAssistantHelper:
         elif self.get_players():
             target_player = self.get_players()[0].get("entity_id")
 
-        # 4. Try Home Assistant media_source resolution with signed play media URL
+        # 4. Check if player entity state currently has a direct playable URL
+        if target_player:
+            player_state = self.hass.states.get(target_player)
+            if player_state and player_state.attributes:
+                p_url = player_state.attributes.get("media_content_id")
+                if p_url and str(p_url).startswith(("http://", "https://")):
+                    return {
+                        "url": p_url,
+                        "mime_type": "audio/mpeg",
+                        "duration": track_duration,
+                    }
+
+        # 5. Try Home Assistant media_source resolution with smart candidate variations (including Plex)
         try:
             from homeassistant.components import media_source
             from homeassistant.components.media_player import async_process_play_media_url
 
             candidates = [media_content_id]
-            if not media_content_id.startswith("media-source://"):
-                clean_id = media_content_id.lstrip("/")
-                candidates.extend([
-                    f"media-source://mass/{clean_id}",
-                    f"media-source://media_source/local/{clean_id}",
-                ])
+            clean_id = str(media_content_id)
+            for prefix in ("media-source://mass/", "media-source://", "plex://", "library://", "/"):
+                if clean_id.startswith(prefix):
+                    clean_id = clean_id[len(prefix):]
+
+            candidates.extend([
+                f"media-source://mass/{clean_id}",
+                f"media-source://mass/track/{clean_id}",
+                f"media-source://plex/{clean_id}",
+                f"media-source://media_source/local/{clean_id}",
+            ])
+            if "/" in clean_id:
+                parts = clean_id.split("/")
+                candidates.append(f"media-source://mass/track/{parts[-1]}")
+                candidates.append(f"media-source://plex/{parts[-1]}")
 
             for cand in candidates:
                 for p_target in (target_player, None):
@@ -890,24 +936,46 @@ class MusicAssistantHelper:
         except Exception as err:
             _LOGGER.debug("media_source resolution error for %s: %s", media_content_id, err)
 
-        # 5. Check Music Assistant client direct server flow
-        client = self._get_mass_client()
-        if client:
-            server_url = getattr(client, "server_url", None)
-            if server_url:
-                queue_id = target_track.get("queue_id") if target_track else None
-                if not queue_id and "/player/" in media_content_id:
-                    queue_id = media_content_id.split("/player/")[-1]
+        # 6. Check Music Assistant client direct server flow (Queue Flow Mode)
+        server_url = self._get_mass_server_url()
+        if server_url:
+            queue_id = target_track.get("queue_id") if target_track else None
+            if not queue_id and "/player/" in media_content_id:
+                queue_id = media_content_id.split("/player/")[-1]
+            if not queue_id and target_player:
+                queue_id = target_player
 
-                if queue_id:
-                    clean_qid = queue_id.replace("media_player.mass_", "").replace("media_player.", "")
-                    return {
-                        "url": f"{server_url}/flow/{clean_qid}",
-                        "mime_type": "audio/flac",
-                        "duration": track_duration,
-                    }
+            if queue_id:
+                clean_qid = str(queue_id).replace("media_player.mass_", "").replace("media_player.", "")
+                return {
+                    "url": f"{server_url}/flow/{clean_qid}",
+                    "mime_type": "audio/flac",
+                    "duration": track_duration,
+                }
 
-        # 6. Return graceful fallback with duration
+        # 7. Check direct Home Assistant native Plex integration
+        try:
+            if "plex" in self.hass.data:
+                plex_data = self.hass.data["plex"]
+                servers = []
+                if isinstance(plex_data, dict):
+                    for v in plex_data.values():
+                        if hasattr(v, "url") or hasattr(v, "_server"):
+                            servers.append(v)
+                for s in servers:
+                    part_id = clean_id.split("/")[-1]
+                    if part_id.isdigit():
+                        plex_url = s.url(f"/library/parts/{part_id}/file.mp3", include_token=True)
+                        if plex_url:
+                            return {
+                                "url": plex_url,
+                                "mime_type": "audio/mpeg",
+                                "duration": track_duration,
+                            }
+        except Exception as plex_err:
+            _LOGGER.debug("Direct Plex resolution error: %s", plex_err)
+
+        # 8. Return graceful fallback with duration
         return {
             "url": None,
             "mime_type": "audio/mpeg",
