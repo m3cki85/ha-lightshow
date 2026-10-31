@@ -845,51 +845,71 @@ class MusicAssistantHelper:
                         resolved_inner["duration"] = track_duration
                     return resolved_inner
 
-        # 4. Try Home Assistant media_source resolution
+        # Determine target player entity for resolution
+        target_player = None
+        if target_track and target_track.get("player_entity_id"):
+            target_player = target_track["player_entity_id"]
+        elif self.get_players():
+            target_player = self.get_players()[0].get("entity_id")
+
+        # 4. Try Home Assistant media_source resolution with signed play media URL
         try:
             from homeassistant.components import media_source
+            from homeassistant.components.media_player import async_process_play_media_url
 
-            # Direct resolve
-            try:
-                resolved = await media_source.async_resolve_media(
-                    self.hass,
-                    media_content_id,
-                    None,
-                )
-                if resolved and resolved.url:
-                    return {
-                        "url": resolved.url,
-                        "mime_type": resolved.mime_type,
-                        "duration": track_duration,
-                    }
-            except Exception as direct_err:
-                _LOGGER.debug("Direct resolve of %s failed: %s, trying prefix fallback", media_content_id, direct_err)
-
-            # Fallback attempts with prefixes
+            candidates = [media_content_id]
             if not media_content_id.startswith("media-source://"):
                 clean_id = media_content_id.lstrip("/")
-                for prefix in ("media-source://mass/", "media-source://media_source/local/"):
+                candidates.extend([
+                    f"media-source://mass/{clean_id}",
+                    f"media-source://media_source/local/{clean_id}",
+                ])
+
+            for cand in candidates:
+                for p_target in (target_player, None):
                     try:
                         resolved = await media_source.async_resolve_media(
                             self.hass,
-                            f"{prefix}{clean_id}",
-                            None,
+                            cand,
+                            p_target,
                         )
                         if resolved and resolved.url:
+                            try:
+                                final_url = async_process_play_media_url(self.hass, resolved.url)
+                            except Exception:
+                                final_url = resolved.url
+
                             return {
-                                "url": resolved.url,
-                                "mime_type": resolved.mime_type,
+                                "url": final_url,
+                                "mime_type": getattr(resolved, "mime_type", "audio/mpeg"),
                                 "duration": track_duration,
                             }
-                    except Exception:
-                        pass
+                    except Exception as direct_err:
+                        _LOGGER.debug("Resolve %s with player %s failed: %s", cand, p_target, direct_err)
 
         except Exception as err:
             _LOGGER.debug("media_source resolution error for %s: %s", media_content_id, err)
 
-        # 5. Return graceful fallback with duration (even if direct stream URL is not available)
+        # 5. Check Music Assistant client direct server flow
+        client = self._get_mass_client()
+        if client:
+            server_url = getattr(client, "server_url", None)
+            if server_url:
+                queue_id = target_track.get("queue_id") if target_track else None
+                if not queue_id and "/player/" in media_content_id:
+                    queue_id = media_content_id.split("/player/")[-1]
+
+                if queue_id:
+                    clean_qid = queue_id.replace("media_player.mass_", "").replace("media_player.", "")
+                    return {
+                        "url": f"{server_url}/flow/{clean_qid}",
+                        "mime_type": "audio/flac",
+                        "duration": track_duration,
+                    }
+
+        # 6. Return graceful fallback with duration
         return {
             "url": None,
-            "mime_type": None,
+            "mime_type": "audio/mpeg",
             "duration": track_duration,
         }

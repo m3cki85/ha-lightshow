@@ -355,28 +355,17 @@ class LightShowMediaResolveView(LightShowBaseView):
                 return self.json({"success": False, "error": "Missing media_content_id"}, status_code=400)
             
             resolved = await self.mass.async_resolve_media(content_id)
-            if resolved and resolved.get("url"):
-                proxy_url = f"{API_URL_PREFIX}/media/proxy?media_content_id={quote(content_id)}"
-                return self.json({
-                    "success": True,
-                    "url": proxy_url,
-                    "raw_url": resolved["url"],
-                    "mime_type": resolved.get("mime_type"),
-                    "duration": resolved.get("duration", 0),
-                    "direct_stream_available": True,
-                })
-
-            # Stream URL could not be resolved directly for browser playback (e.g. Spotify, DRM, Echo Dot, external speaker).
-            # Return HTTP 200 with success: True so LightShow Studio adopts the track, duration, and title cleanly.
+            proxy_url = f"{API_URL_PREFIX}/media/proxy?media_content_id={quote(content_id)}"
             duration = resolved.get("duration", 0) if resolved else 0
+            raw_url = resolved.get("url") if resolved else None
+
             return self.json({
                 "success": True,
-                "url": None,
-                "raw_url": None,
-                "mime_type": None,
+                "url": proxy_url,
+                "raw_url": raw_url,
+                "mime_type": resolved.get("mime_type") if resolved else "audio/mpeg",
                 "duration": duration,
-                "direct_stream_available": False,
-                "message": "Direct stream URL not available (live streaming via player)",
+                "direct_stream_available": bool(raw_url),
             })
         except Exception as err:
             _LOGGER.error("Resolve media error: %s", err)
@@ -403,7 +392,21 @@ class LightShowMediaProxyView(LightShowBaseView):
                 target_url = resolved["url"]
 
         if not target_url:
-            return web.Response(status=404, text="Target audio URL not found")
+            # Clean silent MP3 fallback so browser HTML5 audio element does not fail
+            silent_mp3 = (
+                b"\xff\xfb\x90d\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+                b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+            ) * 10
+            return web.Response(
+                body=silent_mp3,
+                content_type="audio/mpeg",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(len(silent_mp3)),
+                }
+            )
 
         # 1. Local LightShow upload file
         if "/api/lightshow/audio/" in target_url:
@@ -452,9 +455,13 @@ class LightShowMediaProxyView(LightShowBaseView):
             stream_response = web.StreamResponse(status=resp.status, headers=headers)
             await stream_response.prepare(request)
 
-            async for chunk in resp.content.iter_chunked(65536):
-                await stream_response.write(chunk)
-            await stream_response.write_eof()
+            try:
+                async for chunk in resp.content.iter_chunked(65536):
+                    await stream_response.write(chunk)
+                await stream_response.write_eof()
+            except (ConnectionResetError, aiohttp.ClientPayloadError, asyncio.CancelledError):
+                pass
+
             return stream_response
         except Exception as err:
             _LOGGER.error("Failed to proxy media URL %s: %s", target_url, err)
