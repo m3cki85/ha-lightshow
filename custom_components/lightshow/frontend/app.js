@@ -26,6 +26,7 @@ class LightShowStudio {
     // Audio Context & Waveform
     this.audioCtx = null;
     this.audioBuffer = null;
+    this.audioBufferPeak = 1.0;
     this.animFrameId = null;
     
     // Cache DOM
@@ -1204,9 +1205,15 @@ class LightShowStudio {
     // Extra margin so user can comfortably scroll and position beyond the end of the song
     const timelineWidth = Math.max(1400, Math.ceil((totalDuration + 8) * this.zoom));
 
-    // Set widths of canvas and container
+    // Dynamic heights matching rendered CSS layout (default 120px for full-bleed waveform)
+    const waveH = this.dom.waveformCanvas?.clientHeight || 120;
+    const rulerH = this.dom.rulerCanvas?.clientHeight || 26;
+
+    // Set widths and heights of canvas and container
     this.dom.rulerCanvas.width = timelineWidth;
+    this.dom.rulerCanvas.height = rulerH;
     this.dom.waveformCanvas.width = timelineWidth;
+    this.dom.waveformCanvas.height = waveH;
     this.dom.audioTimeline.style.width = `${timelineWidth}px`;
     this.dom.audioTimeline.style.minWidth = `${timelineWidth}px`;
 
@@ -1221,7 +1228,8 @@ class LightShowStudio {
 
   drawRuler(width, duration) {
     const ctx = this.dom.rulerCanvas.getContext("2d");
-    ctx.clearRect(0, 0, width, 24);
+    const height = this.dom.rulerCanvas.height || 26;
+    ctx.clearRect(0, 0, width, height);
 
     ctx.fillStyle = "#94a3b8";
     ctx.font = "10px JetBrains Mono";
@@ -1236,14 +1244,14 @@ class LightShowStudio {
       ctx.beginPath();
       const isMajor = Math.round(t) === t;
       const tickH = isMajor ? 12 : 6;
-      ctx.moveTo(x, 24 - tickH);
-      ctx.lineTo(x, 24);
+      ctx.moveTo(x, height - tickH);
+      ctx.lineTo(x, height);
       ctx.stroke();
 
       if (isMajor) {
         const m = Math.floor(t / 60);
         const s = Math.floor(t % 60).toString().padStart(2, "0");
-        ctx.fillText(`${m}:${s}`, x + 4, 14);
+        ctx.fillText(`${m}:${s}`, x + 4, height - 12);
       }
     }
   }
@@ -1274,6 +1282,16 @@ class LightShowStudio {
         if (this.audioBuffer && this.audioBuffer.duration > 0) {
           this.currentShow.duration = this.audioBuffer.duration;
           this.currentShow.audio.duration = this.audioBuffer.duration;
+
+          // Compute peak across decoded channel data for full vertical scale
+          const chData = this.audioBuffer.getChannelData(0);
+          let peak = 0;
+          const stride = Math.max(1, Math.floor(chData.length / 50000));
+          for (let s = 0; s < chData.length; s += stride) {
+            const v = Math.abs(chData[s]);
+            if (v > peak) peak = v;
+          }
+          this.audioBufferPeak = peak > 0.02 ? peak : 1.0;
         }
         this.dom.audioStatusBadge.textContent = "✅ Bereit (Datei)";
         this.renderTimeline();
@@ -1285,6 +1303,7 @@ class LightShowStudio {
 
     // For Music Assistant items (Plex, Jellyfin, Navidrome, SMB, streams): instant synthetic rhythm waveform
     this.audioBuffer = null;
+    this.audioBufferPeak = null;
     if (fallbackDuration && (!this.currentShow.duration || this.currentShow.duration <= 0)) {
       this.currentShow.duration = fallbackDuration;
     }
@@ -1294,75 +1313,132 @@ class LightShowStudio {
   }
 
   drawWaveform(width) {
-    const ctx = this.dom.waveformCanvas.getContext("2d");
-    const height = 110;
+    const canvas = this.dom.waveformCanvas;
+    const ctx = canvas.getContext("2d");
+    const height = canvas.height || 120;
     ctx.clearRect(0, 0, width, height);
 
     const hasAudio = !!(this.currentShow.audio.stream_url || this.currentShow.audio.mass_uri || this.currentShow.audio.filename);
 
     if (!hasAudio) {
-      ctx.fillStyle = "#161b26";
+      ctx.fillStyle = "#10141f";
       ctx.fillRect(0, 0, width, height);
       ctx.fillStyle = "#64748b";
-      ctx.font = "13px Inter";
-      ctx.fillText("🎵 Wähle oben einen Song aus Music Assistant oder lade eine MP3 hoch", 24, 60);
+      ctx.font = "500 13px Inter, sans-serif";
+      ctx.fillText("🎵 Kein Audio geladen – Wähle oben einen Song aus Music Assistant oder lade eine MP3 hoch", 24, Math.round(height / 2) + 5);
       return;
     }
 
     const mid = height / 2;
 
-    // Glowing neon gradient
+    // Glowing vibrant neon gradient matching DAW aesthetic (cyan top to magenta bottom)
     const grad = ctx.createLinearGradient(0, 0, 0, height);
-    grad.addColorStop(0, "#00d2ff");
-    grad.addColorStop(0.5, "#9333ea");
-    grad.addColorStop(1, "#ff007f");
+    grad.addColorStop(0, "#00e5ff");    // Vibrant cyan peak
+    grad.addColorStop(0.35, "#38bdf8"); // Sky blue
+    grad.addColorStop(0.5, "#a855f7");  // Electric violet center
+    grad.addColorStop(0.7, "#ec4899");  // Neon Pink
+    grad.addColorStop(1, "#f43f5e");    // Hot Rose bottom peak
     ctx.fillStyle = grad;
 
-    if (this.audioBuffer) {
-      const channelData = this.audioBuffer.getChannelData(0);
-      const step = Math.ceil(channelData.length / width);
+    // Total active audio duration in seconds
+    const audioDur = this.audioBuffer?.duration || this.currentShow.audio?.duration || this.currentShow.duration || 240.0;
+    const maxAudioPx = Math.ceil(audioDur * this.zoom);
 
-      for (let i = 0; i < width; i++) {
-        let min = 1.0;
-        let max = -1.0;
-        for (let j = 0; j < step; j++) {
-          const datum = channelData[(i * step) + j];
-          if (datum < min) min = datum;
-          if (datum > max) max = datum;
+    if (this.audioBuffer) {
+      // 1. REAL DECODED AUDIO WAVEFORM (100% time-synced to x = time * this.zoom)
+      const channelData = this.audioBuffer.getChannelData(0);
+      const sampleRate = this.audioBuffer.sampleRate;
+      const totalSamples = channelData.length;
+      const norm = 0.97 / (this.audioBufferPeak || 1.0);
+      const stepPx = 2; // high-resolution 2px bar width
+
+      for (let x = 0; x < width; x += stepPx) {
+        if (x > maxAudioPx) break;
+
+        const t0 = x / this.zoom;
+        const t1 = (x + stepPx) / this.zoom;
+        const s0 = Math.floor(t0 * sampleRate);
+        const s1 = Math.min(totalSamples, Math.ceil(t1 * sampleRate));
+
+        let min = 0.0;
+        let max = 0.0;
+        if (s1 > s0) {
+          const sampleCount = s1 - s0;
+          const subStep = Math.max(1, Math.floor(sampleCount / 30));
+          for (let s = s0; s < s1; s += subStep) {
+            const d = channelData[s];
+            if (d < min) min = d;
+            if (d > max) max = d;
+          }
         }
-        const top = mid - (max * mid * 0.95);
-        const bottom = mid - (min * mid * 0.95);
+
+        // Full-height scaling: peaks reach 97% of lane height
+        const maxVal = Math.min(0.97, Math.abs(max) * norm);
+        const minVal = Math.min(0.97, Math.abs(min) * norm);
+        const top = Math.max(1, Math.round(mid - (maxVal * mid)));
+        const bottom = Math.min(height - 1, Math.round(mid + (minVal * mid)));
         const barH = Math.max(2, bottom - top);
-        ctx.fillRect(i, top, 1.8, barH);
+
+        ctx.fillRect(x, top, stepPx - 0.5, barH);
       }
     } else {
-      // Fallback synthetic rhythm waveform based on show duration & beats
-      const duration = this.currentShow.duration || 30.0;
-      const totalBars = Math.floor(width / 4);
-      for (let b = 0; b < totalBars; b++) {
-        const x = b * 4;
-        const timeAtX = (x / width) * duration;
-        const beat = Math.sin(timeAtX * Math.PI * 2) * 0.4 + Math.sin(timeAtX * Math.PI * 0.5) * 0.3 + 0.3;
-        const amp = Math.max(0.12, Math.min(0.9, beat * (0.6 + 0.4 * Math.sin(b * 13))));
-        const barH = amp * (height * 0.8);
-        const top = mid - (barH / 2);
-        ctx.fillRect(x, top, 2.5, barH);
-      }
+      // 2. SYNTHETIC RHYTHMIC WAVEFORM (Music Assistant streams: 100% time-synced to x = time * this.zoom)
+      const stepPx = 3;
 
-      ctx.fillStyle = "rgba(0,0,0,0.65)";
-      ctx.fillRect(16, 12, 360, 26);
-      ctx.fillStyle = "#00d2ff";
-      ctx.font = "600 11px 'JetBrains Mono', monospace";
-      ctx.fillText(`🎵 ${this.currentShow.audio.title || this.currentShow.audio.filename || "Audio Stream aktiv"}`, 24, 29);
+      for (let x = 0; x < width; x += stepPx) {
+        const timeAtX = x / this.zoom;
+        if (timeAtX > audioDur) break;
+
+        // Synchronized beats: quarter note kicks (2Hz @ 120bpm), 8th notes, measure downbeats
+        const beatQuarter = Math.abs(Math.sin(timeAtX * Math.PI * 2));
+        const beatEighth = Math.abs(Math.sin(timeAtX * Math.PI * 4));
+        const beatMeasure = Math.abs(Math.sin(timeAtX * Math.PI * 0.5));
+
+        // Deterministic pseudo-random variation hash derived strictly from time
+        const bucket = Math.floor(timeAtX * 4);
+        const hash = Math.abs(Math.sin(bucket * 12.9898 + 78.233) * 43758.5453) % 1;
+
+        const rawAmp = 0.38 + 0.35 * beatQuarter + 0.15 * beatMeasure + 0.12 * hash;
+        const amp = Math.max(0.12, Math.min(0.97, rawAmp));
+
+        // Fill the entire track height!
+        const barH = Math.max(4, Math.round(amp * (height * 0.95)));
+        const top = Math.round(mid - (barH / 2));
+        ctx.fillRect(x, top, stepPx - 0.8, barH);
+      }
     }
 
-    // Midline
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+    // Center zero-crossing midline
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, mid);
     ctx.lineTo(width, mid);
     ctx.stroke();
+
+    // Subtle ceiling/floor boundary lines
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
+    ctx.beginPath();
+    ctx.moveTo(0, 1);
+    ctx.lineTo(width, 1);
+    ctx.moveTo(0, height - 1);
+    ctx.lineTo(width, height - 1);
+    ctx.stroke();
+
+    // End-of-Audio line marker if song ends before timeline margin
+    if (maxAudioPx > 0 && maxAudioPx < width) {
+      ctx.strokeStyle = "rgba(0, 210, 255, 0.45)";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(maxAudioPx, 0);
+      ctx.lineTo(maxAudioPx, height);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "600 10px 'JetBrains Mono', monospace";
+      ctx.fillText(`⏹ Song-Ende (${this.formatTime(audioDur)})`, maxAudioPx + 8, mid + 3);
+    }
   }
 
   showHud(x, y, badgeType, badgeText, valHtml) {

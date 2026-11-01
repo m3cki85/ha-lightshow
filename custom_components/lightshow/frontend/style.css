@@ -483,24 +483,38 @@ html, body {
 
 /* Audio Row */
 .audio-row {
-  min-height: 140px;
-  background: #131720;
+  min-height: 146px;
+  background: #10141f;
+}
+
+.audio-header {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  background: #141924;
 }
 
 .audio-timeline {
   display: flex;
   flex-direction: column;
   cursor: pointer;
+  position: relative;
+  background: #0b0e17;
 }
 
 #ruler-canvas {
   display: block;
-  background: #181d28;
-  border-bottom: 1px solid var(--border-color);
+  height: 26px;
+  background: #141924;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 #waveform-canvas {
   display: block;
+  height: 120px;
+  background: #090c14;
 }
 
 /* Playhead */
