@@ -160,9 +160,9 @@ class LightShowStudio {
       this.snap = parseFloat(e.target.value);
     });
 
-    // Play Modes
-    this.dom.modeBrowser.addEventListener("click", () => this.setPlayMode("browser"));
-    this.dom.modeSpeaker.addEventListener("click", () => this.setPlayMode("speaker"));
+    // Play Modes (optional safe check)
+    if (this.dom.modeBrowser) this.dom.modeBrowser.addEventListener("click", () => this.setPlayMode("browser"));
+    if (this.dom.modeSpeaker) this.dom.modeSpeaker.addEventListener("click", () => this.setPlayMode("speaker"));
 
     // Transport
     this.dom.btnPlay.addEventListener("click", () => this.play());
@@ -416,12 +416,9 @@ class LightShowStudio {
   }
 
   setPlayMode(mode) {
-    if (this.isPlaying) {
-      this.pause();
-    }
     this.playMode = mode;
-    this.dom.modeBrowser.classList.toggle("active", mode === "browser");
-    this.dom.modeSpeaker.classList.toggle("active", mode === "speaker");
+    if (this.dom.modeBrowser) this.dom.modeBrowser.classList.toggle("active", mode === "browser");
+    if (this.dom.modeSpeaker) this.dom.modeSpeaker.classList.toggle("active", mode === "speaker");
   }
 
   // --- API LOADERS ---
@@ -941,15 +938,18 @@ class LightShowStudio {
       this.renderAudioOptions();
       this.dom.audioTitleDisplay.textContent = this.currentShow.audio.title || this.currentShow.audio.filename || "Audiodatei geladen";
 
-      if (streamUrl) {
-        this.dom.audioStatusBadge.textContent = "✅ Bereit (Studio & Live)";
+      if (this.currentShow.audio.mass_uri) {
+        this.dom.audioStatusBadge.textContent = "✅ Bereit (Music Assistant)";
+        this.dom.audioStatusBadge.className = "badge badge-wled";
+        this.loadAudioWaveform(streamUrl || this.currentShow.audio.mass_uri, this.currentShow.duration || 30.0);
+      } else if (streamUrl) {
+        this.dom.audioStatusBadge.textContent = "✅ Bereit (Datei)";
         this.dom.audioStatusBadge.className = "badge badge-wled";
         this.loadAudioWaveform(streamUrl, this.currentShow.duration || 30.0);
       } else {
-        this.dom.audioStatusBadge.textContent = "🔊 Nur Live-Lautsprecher (Keine MP3)";
-        this.dom.audioStatusBadge.className = "badge badge-zigbee";
-        this.dom.audioPlayer.removeAttribute("src");
-        this.audioBuffer = null;
+        this.dom.audioStatusBadge.textContent = "✅ Bereit";
+        this.dom.audioStatusBadge.className = "badge badge-wled";
+        this.loadAudioWaveform(null, this.currentShow.duration || 30.0);
       }
     } else {
       this.renderAudioOptions();
@@ -1018,46 +1018,48 @@ class LightShowStudio {
   }
 
   async loadAudioWaveform(url, fallbackDuration = 30.0) {
-    if (!url) return;
-    this.dom.audioStatusBadge.textContent = "Lade Audio...";
-    this.dom.audioStatusBadge.classList.add("badge-wled");
-
-    // Connect to browser audio player
-    this.dom.audioPlayer.src = url;
-    this.dom.audioPlayer.onloadedmetadata = () => {
-      if (this.dom.audioPlayer.duration && !isNaN(this.dom.audioPlayer.duration) && isFinite(this.dom.audioPlayer.duration) && this.dom.audioPlayer.duration > 0) {
-        this.currentShow.duration = this.dom.audioPlayer.duration;
-        this.currentShow.audio.duration = this.dom.audioPlayer.duration;
-        this.renderTimeline();
-        this.updateTimeDisplay();
-      }
-    };
-
-    try {
-      if (!this.audioCtx) {
-        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const arrayBuffer = await response.arrayBuffer();
-      this.audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
-      
-      // Update duration from actual audio buffer
-      if (this.audioBuffer && this.audioBuffer.duration > 0) {
-        this.currentShow.duration = this.audioBuffer.duration;
-        this.currentShow.audio.duration = this.audioBuffer.duration;
-      }
-      this.dom.audioStatusBadge.textContent = "Bereit";
+    if (!url) {
+      this.dom.audioStatusBadge.textContent = "✅ Bereit (Music Assistant)";
+      this.dom.audioStatusBadge.className = "badge badge-wled";
       this.renderTimeline();
-    } catch (err) {
-      console.warn("Waveform decode warning / using stream fallback:", err);
-      this.audioBuffer = null;
-      if (fallbackDuration && (!this.currentShow.duration || this.currentShow.duration <= 0)) {
-        this.currentShow.duration = fallbackDuration;
-      }
-      this.dom.audioStatusBadge.textContent = "Bereit (Stream)";
-      this.renderTimeline();
+      return;
     }
+
+    // Only decode audio in Web Audio API if it's a local static uploaded file
+    if (url.startsWith("/api/lightshow/audio/")) {
+      this.dom.audioStatusBadge.textContent = "Lade Audio...";
+      this.dom.audioStatusBadge.className = "badge badge-wled";
+      if (this.dom.audioPlayer) this.dom.audioPlayer.src = url;
+
+      try {
+        if (!this.audioCtx) {
+          this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const arrayBuffer = await response.arrayBuffer();
+        this.audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
+
+        if (this.audioBuffer && this.audioBuffer.duration > 0) {
+          this.currentShow.duration = this.audioBuffer.duration;
+          this.currentShow.audio.duration = this.audioBuffer.duration;
+        }
+        this.dom.audioStatusBadge.textContent = "✅ Bereit (Datei)";
+        this.renderTimeline();
+        return;
+      } catch (err) {
+        console.warn("Local file decode warning:", err);
+      }
+    }
+
+    // For Music Assistant items (Plex, Jellyfin, Navidrome, SMB, streams): instant synthetic rhythm waveform
+    this.audioBuffer = null;
+    if (fallbackDuration && (!this.currentShow.duration || this.currentShow.duration <= 0)) {
+      this.currentShow.duration = fallbackDuration;
+    }
+    this.dom.audioStatusBadge.textContent = "✅ Bereit (Music Assistant)";
+    this.dom.audioStatusBadge.className = "badge badge-wled";
+    this.renderTimeline();
   }
 
   drawWaveform(width) {
@@ -1969,31 +1971,26 @@ data:
   async play() {
     if (this.isPlaying) return;
 
-    if (this.playMode === "speaker") {
-      // --- LIVE (LAUTSPRECHER) MODUS ---
-      // Wiedergabe läuft über Music Assistant auf dem ausgewählten physischen Lautsprecher
-      let selectedPlayer = this.dom.playerSelect.value || this.currentShow.settings.default_player_entity_id;
+    // Determine target player (from dropdown or show settings)
+    let selectedPlayer = this.dom.playerSelect?.value || this.currentShow.settings.default_player_entity_id;
 
-      // Falls noch kein Lautsprecher gewählt ist, automatisch den ersten verfügbaren wählen
-      if (!selectedPlayer && this.players && this.players.length > 0) {
-        selectedPlayer = this.players[0].entity_id;
-        this.dom.playerSelect.value = selectedPlayer;
-        this.currentShow.settings.default_player_entity_id = selectedPlayer;
-      }
-
-      if (!selectedPlayer) {
-        alert("Bitte wähle oben einen Lautsprecher aus, über den Music Assistant die Musik abspielen soll!");
-        return;
-      }
-
+    // Auto-select first available player if none selected
+    if (!selectedPlayer && this.players && this.players.length > 0) {
+      selectedPlayer = this.players[0].entity_id;
+      if (this.dom.playerSelect) this.dom.playerSelect.value = selectedPlayer;
       this.currentShow.settings.default_player_entity_id = selectedPlayer;
-      this.currentShow.settings.loop = this.isLooping;
+    }
 
-      // Browser-Audio anhalten, damit es nicht zu einer doppelten Wiedergabe/Echo kommt
-      if (this.dom.audioPlayer) {
-        this.dom.audioPlayer.pause();
-      }
+    if (!selectedPlayer) {
+      alert("Bitte wähle oben einen Lautsprecher aus, über den Music Assistant die Musik abspielen soll!");
+      return;
+    }
 
+    this.currentShow.settings.default_player_entity_id = selectedPlayer;
+    this.currentShow.settings.loop = this.isLooping;
+
+    // Start playback through Music Assistant engine
+    try {
       const res = await fetch(`${this.apiBase}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2008,52 +2005,18 @@ data:
       });
       const data = await res.json();
       if (!data.success) {
-        alert("Fehler beim Starten der Wiedergabe: " + (data.error || "Unbekannter Fehler"));
-        return;
+        console.warn("Backend play note:", data.error);
       }
-    } else {
-      // --- STUDIO (BROWSER) MODUS ---
-      // Vorschau direkt im Browser / PC - Lautsprecher im Raum bleibt KOMPLETT stumm!
-      if (!this.dom.audioPlayer.src && !this.currentShow.audio.stream_url && this.currentShow.audio.mass_uri) {
-        // Attempt on-demand resolve of Music Assistant / local stream URL
-        try {
-          const res = await fetch(`${this.apiBase}/media/resolve`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ media_content_id: this.currentShow.audio.mass_uri }),
-          });
-          const data = await res.json();
-          if (data && data.success && data.url) {
-            this.currentShow.audio.stream_url = data.url;
-            this.dom.audioPlayer.src = data.url;
-            if (data.duration && data.duration > 0 && !this.currentShow.duration) {
-              this.currentShow.duration = data.duration;
-            }
-          }
-        } catch (e) {
-          console.warn("On-demand stream resolve warning:", e);
-        }
-      }
+    } catch (err) {
+      console.warn("Control play call warning:", err);
+    }
 
-      if (!this.dom.audioPlayer.src && this.currentShow.audio.stream_url) {
-        this.dom.audioPlayer.src = this.currentShow.audio.stream_url;
-      }
-
-      if (this.dom.audioPlayer.src) {
+    // Optional browser local playback if user loaded an uploaded MP3 file directly
+    if (this.dom.audioPlayer && this.currentShow.audio.stream_url && this.currentShow.audio.stream_url.startsWith("/api/lightshow/audio/")) {
+      try {
         this.dom.audioPlayer.currentTime = this.currentTime;
-        try {
-          await this.dom.audioPlayer.play();
-        } catch (e) {
-          console.warn("Browser audio playback warning:", e);
-        }
-      } else {
-        alert(
-          "Hinweis: Für die direkte Browser-Wiedergabe konnte noch kein Audio-Stream ermittelt werden.\n\n" +
-          "• Falls der Song über Music Assistant (Plex, Jellyfin, Navidrome oder SMB/Lokale Datei) läuft: Starte die Wiedergabe kurz auf deinem Lautsprecher und klicke auf '⚡ Vom Player übernehmen'.\n" +
-          "• Oder lade oben per '➕ MP3 laden' direkt deine Audiodatei hoch."
-        );
-        return;
-      }
+        await this.dom.audioPlayer.play();
+      } catch (e) {}
     }
 
     this.isPlaying = true;
@@ -2069,19 +2032,17 @@ data:
     this.dom.btnPlay.style.display = "flex";
     this.dom.btnPause.style.display = "none";
 
-    if (this.playMode === "speaker") {
-      const selectedPlayer = this.dom.playerSelect.value || this.currentShow.settings.default_player_entity_id;
-      if (selectedPlayer) {
-        await fetch(`${this.apiBase}/control`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "pause" }),
-        });
-      }
-    } else {
-      if (this.dom.audioPlayer) {
-        this.dom.audioPlayer.pause();
-      }
+    // Pause Music Assistant
+    try {
+      await fetch(`${this.apiBase}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pause" }),
+      });
+    } catch (e) {}
+
+    if (this.dom.audioPlayer) {
+      try { this.dom.audioPlayer.pause(); } catch (e) {}
     }
 
     if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
@@ -2089,87 +2050,92 @@ data:
 
   async stop() {
     this.isPlaying = false;
-    this.currentTime = 0.0;
     this.dom.btnPlay.style.display = "flex";
     this.dom.btnPause.style.display = "none";
 
-    if (this.playMode === "speaker") {
-      const selectedPlayer = this.dom.playerSelect.value || this.currentShow.settings.default_player_entity_id;
-      if (selectedPlayer) {
-        await fetch(`${this.apiBase}/control`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "stop" }),
-        });
-      }
-    } else {
-      if (this.dom.audioPlayer) {
+    // Stop Music Assistant
+    try {
+      await fetch(`${this.apiBase}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      });
+    } catch (e) {}
+
+    if (this.dom.audioPlayer) {
+      try {
         this.dom.audioPlayer.pause();
         this.dom.audioPlayer.currentTime = 0;
-      }
+      } catch (e) {}
     }
 
     if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
-    this.updatePlayheadPosition();
-    this.updateTimeDisplay();
+    this.seek(0);
   }
 
-  seek(targetTime) {
+  async seek(targetTime) {
     this.currentTime = Math.max(0, Math.min(targetTime, this.currentShow.duration || 60));
-    if (this.playMode === "browser" && this.dom.audioPlayer.src) {
-      this.dom.audioPlayer.currentTime = this.currentTime;
+    if (this.dom.audioPlayer && this.dom.audioPlayer.src) {
+      try { this.dom.audioPlayer.currentTime = this.currentTime; } catch (e) {}
     }
     this.updatePlayheadPosition();
     this.updateTimeDisplay();
+
+    // Send seek to backend Music Assistant engine
+    try {
+      await fetch(`${this.apiBase}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "seek", time: this.currentTime }),
+      });
+    } catch (e) {}
   }
 
   runPlaybackLoop() {
     if (!this.isPlaying) return;
 
-    if (this.playMode === "browser") {
-      if (this.dom.audioPlayer.src && !this.dom.audioPlayer.paused) {
-        this.currentTime = this.dom.audioPlayer.currentTime;
+    const now = performance.now();
+    const delta = (now - this.lastTickTime) / 1000;
+    this.currentTime += delta;
+    this.lastTickTime = now;
+
+    // Check end of show
+    if (this.currentTime >= (this.currentShow.duration || 60)) {
+      if (this.isLooping) {
+        this.seek(0);
       } else {
-        const now = performance.now();
-        const delta = (now - this.lastTickTime) / 1000;
-        this.currentTime += delta;
-        this.lastTickTime = now;
+        this.stop();
+        return;
       }
-
-      // Check end of show
-      if (this.currentTime >= this.currentShow.duration) {
-        if (this.isLooping) {
-          this.seek(0);
-        } else {
-          this.stop();
-          return;
-        }
-      }
-
-      this.updatePlayheadPosition();
-      this.updateTimeDisplay();
     }
 
+    this.updatePlayheadPosition();
+    this.updateTimeDisplay();
     this.animFrameId = requestAnimationFrame(() => this.runPlaybackLoop());
   }
 
   startBackendStatusSync() {
-    // Poll backend status periodically for sync when playing via speaker
+    // Poll backend status periodically to keep timeline in lockstep with Music Assistant
     setInterval(async () => {
-      if (this.playMode === "speaker" && this.isPlaying) {
-        try {
-          const res = await fetch(`${this.apiBase}/status`);
-          const data = await res.json();
-          if (data.state === "playing") {
+      if (!this.isPlaying) return;
+      try {
+        const res = await fetch(`${this.apiBase}/status`);
+        const data = await res.json();
+        if (data && data.state === "playing" && typeof data.current_time === "number") {
+          // If local clock drifted more than 0.35s from Music Assistant player, smoothly align
+          const diff = Math.abs(this.currentTime - data.current_time);
+          if (diff > 0.35) {
             this.currentTime = data.current_time;
             this.updatePlayheadPosition();
             this.updateTimeDisplay();
-          } else if (data.state === "idle" || data.state === "stopped") {
-            this.stop();
           }
-        } catch (e) {}
-      }
-    }, 250);
+        } else if (data && (data.state === "idle" || data.state === "stopped")) {
+          this.stop();
+        } else if (data && data.state === "paused" && this.isPlaying) {
+          this.pause();
+        }
+      } catch (e) {}
+    }, 350);
   }
 
   updatePlayheadPosition() {

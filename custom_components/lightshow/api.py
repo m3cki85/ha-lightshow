@@ -272,6 +272,11 @@ class LightShowControlView(LightShowBaseView):
                 await self.engine.async_resume()
                 return self.json({"success": True})
 
+            elif action == "seek":
+                seek_time = float(data.get("time", 0.0))
+                await self.engine.async_seek(seek_time)
+                return self.json({"success": True, "time": seek_time})
+
             elif action == "test_cue":
                 entity_id = data.get("entity_id")
                 cue = data.get("cue", {})

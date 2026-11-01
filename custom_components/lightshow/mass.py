@@ -1,6 +1,7 @@
 """Music Assistant integration helper."""
 
 import os
+import asyncio
 import logging
 from typing import Dict, List, Optional, Any, Set
 from urllib.parse import quote, unquote
@@ -420,11 +421,19 @@ class MusicAssistantHelper:
         track_title: Optional[str] = None,
         media_type: Optional[str] = None,
         enqueue: str = "replace",
+        start_time: float = 0.0,
     ) -> bool:
         """Start media playback on the specified player via Music Assistant or Home Assistant."""
         if not player_entity_id:
             _LOGGER.warning("async_play_media called without player_entity_id")
             return False
+
+        def _schedule_seek():
+            if start_time > 0:
+                async def _delayed():
+                    await asyncio.sleep(0.5)
+                    await self.async_seek_media(player_entity_id, start_time)
+                self.hass.async_create_task(_delayed())
 
         # 1. Determine best play target
         play_target = None
@@ -450,11 +459,12 @@ class MusicAssistantHelper:
             play_target = track_title
 
         _LOGGER.info(
-            "async_play_media on %s with target: %s (original media_id: %s, title: %s)",
+            "async_play_media on %s with target: %s (original media_id: %s, title: %s, start_time: %.1f)",
             player_entity_id,
             play_target,
             media_id,
             track_title,
+            start_time,
         )
 
         # 2. Direct Music Assistant Client (native WebSocket protocol)
@@ -496,15 +506,18 @@ class MusicAssistantHelper:
                         option="replace",
                     )
                     _LOGGER.info("Direct client.player_queues.play_media succeeded for queue '%s' with '%s'", queue_id, play_target)
+                    _schedule_seek()
                     return True
                 else:
                     if hasattr(client.player_queues, "resume"):
                         await client.player_queues.resume(queue_id)
                         _LOGGER.info("Direct client.player_queues.resume succeeded for queue '%s'", queue_id)
+                        _schedule_seek()
                         return True
                     elif hasattr(client.player_queues, "play"):
                         await client.player_queues.play(queue_id)
                         _LOGGER.info("Direct client.player_queues.play succeeded for queue '%s'", queue_id)
+                        _schedule_seek()
                         return True
 
             except Exception as client_err:
@@ -526,6 +539,7 @@ class MusicAssistantHelper:
                             blocking=False,
                         )
                         _LOGGER.info("Called %s.play_media with target %s for %s", s_domain, player_entity_id, play_target)
+                        _schedule_seek()
                         return True
                     except Exception as err:
                         _LOGGER.debug("%s.play_media with target failed: %s, trying legacy data format", s_domain, err)
@@ -541,6 +555,7 @@ class MusicAssistantHelper:
                                 blocking=False,
                             )
                             _LOGGER.info("Called legacy %s.play_media for %s with %s", s_domain, player_entity_id, play_target)
+                            _schedule_seek()
                             return True
                         except Exception as leg_err:
                             _LOGGER.debug("%s.play_media legacy format failed: %s", s_domain, leg_err)
@@ -559,6 +574,7 @@ class MusicAssistantHelper:
                     blocking=False,
                 )
                 _LOGGER.info("Called media_player.play_media for %s with %s", player_entity_id, play_target)
+                _schedule_seek()
                 return True
             except Exception as err:
                 _LOGGER.debug("media_player.play_media failed: %s, trying without target wrapper", err)
@@ -573,6 +589,7 @@ class MusicAssistantHelper:
                         },
                         blocking=False,
                     )
+                    _schedule_seek()
                     return True
                 except Exception:
                     pass
@@ -586,6 +603,7 @@ class MusicAssistantHelper:
                 blocking=False,
             )
             _LOGGER.info("Called media_player.media_play for %s", player_entity_id)
+            _schedule_seek()
             return True
         except Exception as err:
             _LOGGER.error("Failed to start playback on %s: %s", player_entity_id, err)
@@ -661,6 +679,60 @@ class MusicAssistantHelper:
             return True
         except Exception as err:
             _LOGGER.warning("Failed to pause media on %s: %s", player_entity_id, err)
+            return False
+
+    async def async_seek_media(self, player_entity_id: str, position: float) -> bool:
+        """Seek media player or Music Assistant queue to specific position in seconds."""
+        if not player_entity_id:
+            return False
+
+        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+        client = self._get_mass_client()
+
+        # 1. Direct Music Assistant client call
+        if client and hasattr(client, "player_queues"):
+            try:
+                q_ctrl = client.player_queues
+                if hasattr(q_ctrl, "seek"):
+                    await q_ctrl.seek(clean_id, int(position))
+                    _LOGGER.info("Direct client.player_queues.seek succeeded for %s at %.1fs", clean_id, position)
+                    return True
+                elif hasattr(q_ctrl, "seek_media"):
+                    await q_ctrl.seek_media(clean_id, int(position))
+                    return True
+            except Exception as client_err:
+                _LOGGER.debug("Direct client seek failed: %s", client_err)
+
+        # 2. HA music_assistant / mass service
+        for s_domain in ("music_assistant", "mass"):
+            if self.hass.services.has_service(s_domain, "seek"):
+                try:
+                    await self.hass.services.async_call(
+                        s_domain,
+                        "seek",
+                        service_data={"position": int(position)},
+                        target={"entity_id": player_entity_id},
+                        blocking=False,
+                    )
+                    return True
+                except Exception:
+                    pass
+
+        # 3. Standard HA media_player.media_seek
+        try:
+            await self.hass.services.async_call(
+                "media_player",
+                "media_seek",
+                service_data={
+                    "entity_id": player_entity_id,
+                    "seek_position": float(position),
+                },
+                blocking=False,
+            )
+            _LOGGER.info("Called media_player.media_seek for %s to %.1fs", player_entity_id, position)
+            return True
+        except Exception as err:
+            _LOGGER.warning("Failed to seek on %s: %s", player_entity_id, err)
             return False
 
     def get_active_tracks(self) -> List[Dict[str, Any]]:

@@ -184,6 +184,35 @@ class LightShowEngine:
                 track_title = audio.get("title") or audio.get("filename")
                 await self.mass.async_play_media(self._player_entity_id, media_id, track_title=track_title)
 
+    async def async_seek(self, time_pos: float) -> None:
+        """Seek playback position in seconds."""
+        time_pos = max(0.0, min(self._duration or 3600.0, time_pos))
+        self._current_time = time_pos
+
+        if self._player_entity_id:
+            await self.mass.async_seek_media(self._player_entity_id, time_pos)
+
+        # If currently playing, restart the playback loop from the new position
+        if self._state == "playing":
+            if self._task and not self._task.done():
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+            self._pause_event.set()
+            self._task = asyncio.create_task(self._playback_loop(time_pos))
+        else:
+            self.hass.bus.async_fire(
+                EVENT_PROGRESS,
+                {
+                    "show_id": self._current_show_id,
+                    "current_time": self._current_time,
+                    "duration": self._duration,
+                    "state": self._state,
+                },
+            )
+
     async def async_test_cue(self, entity_id: str, cue: Dict[str, Any]) -> None:
         """Instantly apply a cue to a lamp (used for live preview in the studio editor)."""
         await self._dispatch_cue_to_light(entity_id, cue)
@@ -246,10 +275,11 @@ class LightShowEngine:
         # Start audio if configured
         if self._player_entity_id and self._current_show:
             audio = self._current_show.get("audio", {})
+            # Prioritize native mass_uri so Music Assistant receives its direct URI (plex://, jellyfin://, etc.)
             media_id = audio.get("mass_uri") or audio.get("stream_url")
             track_title = audio.get("title") or audio.get("filename")
-            if media_id and str(media_id).startswith("/"):
-                # Convert relative path to absolute HTTP URL for smart speakers (Echo Dot, Cast, Sonos)
+            if media_id and str(media_id).startswith("/") and not audio.get("mass_uri"):
+                # Convert relative path to absolute HTTP URL for uploaded local files
                 try:
                     from homeassistant.helpers.network import get_url
                     base_url = get_url(self.hass, allow_internal=True, allow_ip=True)
@@ -258,12 +288,18 @@ class LightShowEngine:
                     _LOGGER.warning("Could not determine base URL for speaker audio: %s", err)
 
             _LOGGER.info(
-                "Starting audio playback on %s with media_id: %s, title: %s",
+                "Starting audio playback on %s with media_id: %s, title: %s, start_offset: %.1f",
                 self._player_entity_id,
                 media_id,
                 track_title,
+                start_offset,
             )
-            await self.mass.async_play_media(self._player_entity_id, media_id, track_title=track_title)
+            await self.mass.async_play_media(
+                self._player_entity_id,
+                media_id,
+                track_title=track_title,
+                start_time=start_offset,
+            )
 
         t_start = loop.time() - start_offset
         cue_idx = 0

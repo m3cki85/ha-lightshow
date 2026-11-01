@@ -48,17 +48,19 @@
           </div>
         </div>
 
-        <!-- Right: Playback Mode & Export -->
-        <div class="deck-group mode-export-group">
-          <div class="mode-pill-toggle">
-            <button id="mode-browser" class="mode-btn" title="Audio direkt im Browser abspielen (für Studio-Vorschau)">💻 Studio</button>
-            <button id="mode-speaker" class="mode-btn active" title="Wiedergabe live auf Lautsprecher">🔊 Live</button>
+        <!-- Right: Active Player & Export -->
+        <div class="deck-group player-export-group" style="display:flex; align-items:center; gap:8px;">
+          <div class="player-select-wrapper" style="display:flex; align-items:center; gap:6px; background:#111520; border:1px solid var(--border-color); border-radius:6px; padding:3px 8px;" title="Ausgabe-Lautsprecher / Web Player für Music Assistant">
+            <span style="font-size:12px; color:var(--cyan-accent); font-weight:700;">Player:</span>
+            <select id="player-select" class="select-pill speaker-select-pill" title="Ausgabe-Lautsprecher / Web Player für Music Assistant">
+              <option value="">-- Lautsprecher wählen --</option>
+            </select>
           </div>
           <button id="btn-export-yaml" class="btn-pill btn-pill-accent" title="In Home Assistant Automation nutzen">📋 YAML</button>
         </div>
       </div>
 
-      <!-- Deck Row 2: Audio Routing, Speaker, Grid Snap & Light Actions -->
+      <!-- Deck Row 2: Audio Routing, Grid Snap & Light Actions -->
       <div class="deck-row sub-deck-row">
         <!-- Audio Source Hub -->
         <div class="deck-group audio-hub">
@@ -75,12 +77,9 @@
           <button id="btn-grab-active-song" class="btn-pill" title="Aktuell auf Lautsprecher laufenden Song übernehmen">⚡ Vom Player</button>
         </div>
 
-        <!-- Speaker Hub -->
-        <div class="deck-group speaker-hub">
-          <span class="deck-label">Lautsprecher:</span>
-          <select id="player-select" class="select-pill speaker-select-pill" title="Wiedergabegerät für Live-Modus">
-            <option value="">-- Lautsprecher wählen --</option>
-          </select>
+        <!-- Music Assistant Engine Badge -->
+        <div class="deck-group engine-hub" style="display:flex; align-items:center;">
+          <span class="badge badge-wled" title="Vollständige Music Assistant Playback-Engine aktiv">⚡ Music Assistant Engine</span>
         </div>
 
         <!-- Studio Tools (Snap, Zoom, +Lampe) -->
