@@ -50,13 +50,26 @@ class LightShowStudio {
       btnRewind: document.getElementById("btn-rewind"),
       btnLoop: document.getElementById("btn-loop"),
       btnBlackout: document.getElementById("btn-blackout"),
+      btnBlackoutTransport: document.getElementById("btn-blackout-transport"),
+      btnBlackoutBottom: document.getElementById("btn-blackout-bottom"),
       timeCurrent: document.getElementById("time-current"),
       timeTotal: document.getElementById("time-total"),
+      btnEditDuration: document.getElementById("btn-edit-duration"),
       snapSelect: document.getElementById("snap-select"),
       zoomSlider: document.getElementById("zoom-slider"),
       audioTitleDisplay: document.getElementById("audio-title-display"),
       audioStatusBadge: document.getElementById("audio-status-badge"),
       timelineContainer: document.getElementById("timeline-container"),
+      timelineScrollBar: document.getElementById("timeline-scroll-bar"),
+      btnScrollLeft: document.getElementById("btn-scroll-left"),
+      btnScrollRight: document.getElementById("btn-scroll-right"),
+      timelineScrollTrack: document.getElementById("timeline-scroll-track"),
+      timelineScrollThumb: document.getElementById("timeline-scroll-thumb"),
+      timelineScrollThumbLabel: document.getElementById("timeline-scroll-thumb-label"),
+      btnZoomFit: document.getElementById("btn-zoom-fit"),
+      btnZoomIn: document.getElementById("btn-zoom-in"),
+      btnZoomOut: document.getElementById("btn-zoom-out"),
+      zoomDisplay: document.getElementById("zoom-display"),
       rulerCanvas: document.getElementById("ruler-canvas"),
       waveformCanvas: document.getElementById("waveform-canvas"),
       audioTimeline: document.getElementById("audio-timeline"),
@@ -94,6 +107,17 @@ class LightShowStudio {
       btnTestCueLive: document.getElementById("btn-test-cue-live"),
       btnDeleteCue: document.getElementById("btn-delete-cue"),
       btnSaveCue: document.getElementById("btn-save-cue"),
+      // Lamp Settings Modal
+      lampModal: document.getElementById("lamp-settings-modal"),
+      btnCloseLampSettings: document.getElementById("btn-close-lamp-settings"),
+      btnCancelLampSettings: document.getElementById("btn-cancel-lamp-settings"),
+      btnSaveLampSettings: document.getElementById("btn-save-lamp-settings"),
+      btnTestLampLive: document.getElementById("btn-test-lamp-live"),
+      lampNameInput: document.getElementById("lamp-name-input"),
+      lampEntityDisplay: document.getElementById("lamp-entity-display"),
+      lampFadeInInput: document.getElementById("lamp-fade-in-input"),
+      lampFadeOutInput: document.getElementById("lamp-fade-out-input"),
+      lampApplyExistingCues: document.getElementById("lamp-apply-existing-cues"),
       // Add light modal
       addLightModal: document.getElementById("add-light-modal"),
       btnCloseAddLight: document.getElementById("btn-close-add-light"),
@@ -300,10 +324,128 @@ class LightShowStudio {
       });
     }
 
-    // Blackout Button (Emergency All-Off)
-    if (this.dom.btnBlackout) {
-      this.dom.btnBlackout.addEventListener("click", () => this.blackout());
+    // Blackout Buttons (Transport, Deck Tools, Bottom Bar)
+    if (this.dom.btnBlackout) this.dom.btnBlackout.addEventListener("click", () => this.blackout());
+    if (this.dom.btnBlackoutTransport) this.dom.btnBlackoutTransport.addEventListener("click", () => this.blackout());
+    if (this.dom.btnBlackoutBottom) this.dom.btnBlackoutBottom.addEventListener("click", () => this.blackout());
+
+    // Manual Song Duration Editing
+    const handleEditDuration = () => {
+      const curDur = this.currentShow.duration || 60;
+      const m = Math.floor(curDur / 60);
+      const s = Math.floor(curDur % 60);
+      const curStr = `${m}:${s.toString().padStart(2, '0')}`;
+      const input = prompt("Gesamtdauer des Songs / der Show eingeben (in Sekunden oder MM:SS):", curStr);
+      if (!input) return;
+      let newSec = 0;
+      if (input.includes(":")) {
+        const parts = input.split(":");
+        newSec = (parseInt(parts[0], 10) || 0) * 60 + (parseFloat(parts[1]) || 0);
+      } else {
+        newSec = parseFloat(input) || 0;
+      }
+      if (newSec > 0) {
+        this.currentShow.duration = newSec;
+        this.currentShow.audio.duration = newSec;
+        this.renderTimeline();
+        this.updateTimeDisplay();
+        this.showToast(`⏱️ Songdauer auf ${this.formatTime(newSec)} gesetzt`);
+      }
+    };
+    if (this.dom.timeTotal) this.dom.timeTotal.addEventListener("click", handleEditDuration);
+    if (this.dom.btnEditDuration) this.dom.btnEditDuration.addEventListener("click", handleEditDuration);
+
+    // Dedicated Permanent Horizontal Timeline Scrollbar & Navigation
+    if (this.dom.timelineContainer) {
+      this.dom.timelineContainer.addEventListener("scroll", () => this.updateHorizontalScrollbar());
     }
+    window.addEventListener("resize", () => this.updateHorizontalScrollbar());
+
+    if (this.dom.btnScrollLeft) {
+      this.dom.btnScrollLeft.addEventListener("click", () => {
+        this.dom.timelineContainer.scrollLeft -= 250;
+      });
+    }
+
+    if (this.dom.btnScrollRight) {
+      this.dom.btnScrollRight.addEventListener("click", () => {
+        this.dom.timelineContainer.scrollLeft += 250;
+      });
+    }
+
+    if (this.dom.btnZoomIn) {
+      this.dom.btnZoomIn.addEventListener("click", () => {
+        this.zoom = Math.min(250, this.zoom + 15);
+        this.dom.zoomSlider.value = this.zoom;
+        this.renderTimeline();
+      });
+    }
+
+    if (this.dom.btnZoomOut) {
+      this.dom.btnZoomOut.addEventListener("click", () => {
+        this.zoom = Math.max(10, this.zoom - 15);
+        this.dom.zoomSlider.value = this.zoom;
+        this.renderTimeline();
+      });
+    }
+
+    if (this.dom.btnZoomFit) {
+      this.dom.btnZoomFit.addEventListener("click", () => this.fitSongToScreen());
+    }
+
+    // Dragging the horizontal scrollbar thumb
+    if (this.dom.timelineScrollThumb && this.dom.timelineScrollTrack) {
+      let isDraggingThumb = false;
+      let startMouseX = 0;
+      let startScrollLeft = 0;
+
+      this.dom.timelineScrollThumb.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        isDraggingThumb = true;
+        startMouseX = e.clientX;
+        startScrollLeft = this.dom.timelineContainer.scrollLeft;
+        document.body.style.cursor = "grabbing";
+
+        const onMouseMove = (ev) => {
+          if (!isDraggingThumb) return;
+          const deltaX = ev.clientX - startMouseX;
+          const trackWidth = this.dom.timelineScrollTrack.clientWidth;
+          const thumbWidth = this.dom.timelineScrollThumb.offsetWidth;
+          const scrollableTrack = trackWidth - thumbWidth;
+          if (scrollableTrack <= 0) return;
+
+          const maxScrollLeft = this.dom.timelineContainer.scrollWidth - this.dom.timelineContainer.clientWidth;
+          const scrollRatio = deltaX / scrollableTrack;
+          this.dom.timelineContainer.scrollLeft = Math.max(0, Math.min(maxScrollLeft, startScrollLeft + scrollRatio * maxScrollLeft));
+        };
+
+        const onMouseUp = () => {
+          isDraggingThumb = false;
+          document.body.style.cursor = "";
+          window.removeEventListener("mousemove", onMouseMove);
+          window.removeEventListener("mouseup", onMouseUp);
+        };
+
+        window.addEventListener("mousemove", onMouseMove);
+        window.addEventListener("mouseup", onMouseUp);
+      });
+
+      // Click on track to jump
+      this.dom.timelineScrollTrack.addEventListener("click", (e) => {
+        if (e.target.closest("#timeline-scroll-thumb")) return;
+        const rect = this.dom.timelineScrollTrack.getBoundingClientRect();
+        const clickRatio = (e.clientX - rect.left) / rect.width;
+        const maxScrollLeft = this.dom.timelineContainer.scrollWidth - this.dom.timelineContainer.clientWidth;
+        this.dom.timelineContainer.scrollLeft = clickRatio * maxScrollLeft;
+      });
+    }
+
+    // Lamp Settings Modal Events
+    if (this.dom.btnCloseLampSettings) this.dom.btnCloseLampSettings.addEventListener("click", () => this.closeLampSettings());
+    if (this.dom.btnCancelLampSettings) this.dom.btnCancelLampSettings.addEventListener("click", () => this.closeLampSettings());
+    if (this.dom.btnSaveLampSettings) this.dom.btnSaveLampSettings.addEventListener("click", () => this.saveLampSettings());
+    if (this.dom.btnTestLampLive) this.dom.btnTestLampLive.addEventListener("click", () => this.testLampLive());
 
     // Modals
     this.dom.btnAddLight.addEventListener("click", () => this.openAddLightModal());
@@ -427,6 +569,7 @@ class LightShowStudio {
         }
       } else if (e.key === "Escape") {
         const modalOpen = (this.dom.cueModal && !this.dom.cueModal.classList.contains("hidden"))
+          || (this.dom.lampModal && !this.dom.lampModal.classList.contains("hidden"))
           || (this.dom.mediaModal && !this.dom.mediaModal.classList.contains("hidden"))
           || (this.dom.audioManagerModal && !this.dom.audioManagerModal.classList.contains("hidden"))
           || (this.dom.addLightModal && !this.dom.addLightModal.classList.contains("hidden"))
@@ -435,6 +578,7 @@ class LightShowStudio {
         this.hideContextMenu();
         this.deselectCue();
         if (this.dom.cueModal && !this.dom.cueModal.classList.contains("hidden")) this.closeInspector();
+        if (this.dom.lampModal && !this.dom.lampModal.classList.contains("hidden")) this.closeLampSettings();
         if (this.dom.mediaModal && !this.dom.mediaModal.classList.contains("hidden")) this.dom.mediaModal.classList.add("hidden");
         if (this.dom.audioManagerModal && !this.dom.audioManagerModal.classList.contains("hidden")) this.dom.audioManagerModal.classList.add("hidden");
         if (this.dom.addLightModal && !this.dom.addLightModal.classList.contains("hidden")) this.dom.addLightModal.classList.add("hidden");
@@ -1046,9 +1190,19 @@ class LightShowStudio {
   }
 
   renderTimeline() {
-    const totalDuration = this.currentShow.duration || 30.0;
+    let totalDuration = Math.max(this.currentShow.duration || 0, this.currentShow.audio?.duration || 0);
+    (this.currentShow.tracks || []).forEach(tr => {
+      (tr.cues || []).forEach(c => {
+        const endT = (c.time || 0) + (c.duration || 2.0);
+        if (endT > totalDuration) totalDuration = endT;
+      });
+    });
+
+    if (totalDuration <= 0) totalDuration = 240.0; // 4 minutes standard song fallback
+    this.currentShow.duration = totalDuration;
+
     // Extra margin so user can comfortably scroll and position beyond the end of the song
-    const timelineWidth = Math.max(1200, Math.ceil((totalDuration + 6) * this.zoom));
+    const timelineWidth = Math.max(1400, Math.ceil((totalDuration + 8) * this.zoom));
 
     // Set widths of canvas and container
     this.dom.rulerCanvas.width = timelineWidth;
@@ -1062,6 +1216,7 @@ class LightShowStudio {
     // Render Light Tracks
     this.renderLightTracks(timelineWidth);
     this.updatePlayheadPosition();
+    this.updateHorizontalScrollbar();
   }
 
   drawRuler(width, duration) {
@@ -1278,17 +1433,16 @@ class LightShowStudio {
               <span class="lamp-status-dot" id="dot-${track.id}"></span>
               <span class="track-name" title="${track.name}">${track.name}</span>
             </div>
-            <button class="btn btn-micro btn-danger" title="Spur entfernen" data-action="del-track">✕</button>
+            <div class="track-actions-top">
+              <button class="btn-track-settings" data-action="settings" title="Lampen-Einstellungen öffnen (Fade In / Out Zeiten separat, Name)">⚙️</button>
+              <button class="btn btn-micro btn-danger" title="Spur entfernen" data-action="del-track">✕</button>
+            </div>
           </div>
-          <div class="track-badges">
-            <span class="badge ${isWled ? 'badge-wled' : 'badge-zigbee'}">${isWled ? 'WLED' : 'Standard/Zigbee'}</span>
-          </div>
-          <div class="track-fade-row" title="Standard Fade In (Start) und Fade Out (Ende) in Sekunden für diese Lampe">
-            <span>Fade:</span>
-            <input type="number" class="track-fade-input" data-track-id="${track.id}" data-fade="in" value="${defaultFadeIn}" step="0.1" min="0" max="10" title="Standard Fade In (Start) in Sek.">
-            <span>/</span>
-            <input type="number" class="track-fade-input" data-track-id="${track.id}" data-fade="out" value="${defaultFadeOut}" step="0.1" min="0" max="10" title="Standard Fade Out (Ende) in Sek.">
-            <span>s</span>
+          <div class="track-sub-row">
+            <span class="badge ${isWled ? 'badge-wled' : 'badge-zigbee'}">${isWled ? 'WLED' : 'Standard'}</span>
+            <button class="badge-fade-btn" data-action="settings" title="Klicken für separate Fade In/Out Einstellungen dieser Lampe">
+              ↗ ${Number(defaultFadeIn).toFixed(1)}s | ↘ ${Number(defaultFadeOut).toFixed(1)}s
+            </button>
           </div>
           <div class="track-controls-bar">
             <button class="btn-track-toggle" data-action="toggle-live" title="Lampe jetzt sofort an-/ausschalten">⏻ Schalten</button>
@@ -1297,18 +1451,9 @@ class LightShowStudio {
         </div>
       `;
 
-      // Track-level Fade In/Out input changes
-      header.querySelectorAll(".track-fade-input").forEach(input => {
-        input.addEventListener("change", (e) => {
-          const type = e.target.dataset.fade;
-          const val = Math.max(0, parseFloat(e.target.value) || 0.0);
-          e.target.value = val;
-          if (type === "in") {
-            track.default_fade_in = val;
-          } else {
-            track.default_fade_out = val;
-          }
-        });
+      // Open Lamp Settings Modal
+      header.querySelectorAll('[data-action="settings"]').forEach(btn => {
+        btn.addEventListener("click", () => this.openLampSettings(track.id));
       });
 
       // Live Toggle Action
@@ -1935,6 +2080,11 @@ class LightShowStudio {
         <span class="menu-icon">${isOff ? '💡' : '⏻'}</span>
         <span class="menu-label">${isOff ? 'Lampe einschalten (An)' : 'Lampe ausschalten (Aus)'}</span>
       </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-action="lamp-settings">
+        <span class="menu-icon">⚙️</span>
+        <span class="menu-label">Lampen-Einstellungen (Fade In/Out)...</span>
+      </div>
       <div class="menu-item text-danger" data-action="delete">
         <span class="menu-icon">🗑️</span>
         <span class="menu-label">Segment löschen</span>
@@ -1964,6 +2114,9 @@ class LightShowStudio {
           this.hideContextMenu();
           this.renderTimeline();
           this.showToast(cue.state === "on" ? "💡 Segment auf AN geschaltet" : "⏻ Segment auf AUS geschaltet");
+        } else if (action === "lamp-settings") {
+          this.hideContextMenu();
+          this.openLampSettings(track.id);
         } else if (action === "delete") {
           this.deleteCue(track.id, cueIdx);
           this.hideContextMenu();
@@ -2015,6 +2168,11 @@ class LightShowStudio {
         <span class="menu-icon">🎯</span>
         <span class="menu-label">Cursor hierher setzen (${clickTime.toFixed(2)}s)</span>
       </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-action="lamp-settings">
+        <span class="menu-icon">⚙️</span>
+        <span class="menu-label">Lampen-Einstellungen (Fade In/Out)...</span>
+      </div>
     `;
 
     menu.querySelectorAll(".menu-item").forEach(item => {
@@ -2030,6 +2188,9 @@ class LightShowStudio {
         } else if (action === "seek") {
           this.seek(clickTime);
           this.hideContextMenu();
+        } else if (action === "lamp-settings") {
+          this.hideContextMenu();
+          this.openLampSettings(track.id);
         }
       });
     });
@@ -2115,6 +2276,87 @@ class LightShowStudio {
   closeInspector() {
     this.selectedCueRef = null;
     this.dom.cueModal.classList.add("hidden");
+  }
+
+  // --- LAMP SETTINGS MODAL ---
+
+  openLampSettings(trackId) {
+    const track = this.currentShow.tracks.find(t => t.id === trackId);
+    if (!track) return;
+
+    this.activeLampTrackId = trackId;
+    if (this.dom.lampNameInput) this.dom.lampNameInput.value = track.name || "";
+    if (this.dom.lampEntityDisplay) this.dom.lampEntityDisplay.textContent = track.entity_id || "-";
+    if (this.dom.lampFadeInInput) this.dom.lampFadeInInput.value = track.default_fade_in !== undefined ? track.default_fade_in : 0.0;
+    if (this.dom.lampFadeOutInput) this.dom.lampFadeOutInput.value = track.default_fade_out !== undefined ? track.default_fade_out : 0.5;
+    if (this.dom.lampApplyExistingCues) this.dom.lampApplyExistingCues.checked = false;
+
+    if (this.dom.lampModal) {
+      this.dom.lampModal.classList.remove("hidden");
+    }
+  }
+
+  closeLampSettings() {
+    this.activeLampTrackId = null;
+    if (this.dom.lampModal) {
+      this.dom.lampModal.classList.add("hidden");
+    }
+  }
+
+  saveLampSettings() {
+    if (!this.activeLampTrackId) return;
+    const track = this.currentShow.tracks.find(t => t.id === this.activeLampTrackId);
+    if (!track) return;
+
+    if (this.dom.lampNameInput && this.dom.lampNameInput.value.trim()) {
+      track.name = this.dom.lampNameInput.value.trim();
+    }
+    const fadeIn = Math.max(0, parseFloat(this.dom.lampFadeInInput?.value) || 0.0);
+    const fadeOut = Math.max(0, parseFloat(this.dom.lampFadeOutInput?.value) || 0.0);
+    track.default_fade_in = fadeIn;
+    track.default_fade_out = fadeOut;
+
+    if (this.dom.lampApplyExistingCues && this.dom.lampApplyExistingCues.checked) {
+      (track.cues || []).forEach(c => {
+        c.fade_in = fadeIn;
+        c.fade_out = fadeOut;
+        c.transition = c.state === "on" ? fadeIn : fadeOut;
+      });
+      this.showToast(`⚙️ Einstellungen gespeichert & auf ${track.cues.length} Segmente angewendet!`);
+    } else {
+      this.showToast("⚙️ Lampen-Einstellungen gespeichert!");
+    }
+
+    this.closeLampSettings();
+    this.renderTimeline();
+  }
+
+  async testLampLive() {
+    if (!this.activeLampTrackId) return;
+    const track = this.currentShow.tracks.find(t => t.id === this.activeLampTrackId);
+    if (!track) return;
+
+    const fadeIn = Math.max(0, parseFloat(this.dom.lampFadeInInput?.value) || 0.0);
+    try {
+      await fetch(`${this.apiBase}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "test_cue",
+          entity_id: track.entity_id,
+          cue: {
+            state: "on",
+            brightness: 255,
+            rgb_color: [255, 255, 255],
+            transition: fadeIn,
+            fade_in: fadeIn,
+          }
+        })
+      });
+      this.showToast(`💡 Test: ${track.name} mit Fade In ${fadeIn}s eingeschaltet`);
+    } catch (e) {
+      console.warn("Test lamp error:", e);
+    }
   }
 
   // --- ADD LIGHT MODAL ---
@@ -2645,6 +2887,13 @@ data:
         const elapsedSinceStart = performance.now() - (this.playbackStartedAt || 0);
 
         if (data && data.state === "playing" && typeof data.current_time === "number") {
+          // If backend reports audio duration that is longer than loaded show duration, update timeline
+          if (typeof data.duration === "number" && data.duration > 5 && Math.abs(data.duration - (this.currentShow.duration || 0)) > 2) {
+            this.currentShow.duration = data.duration;
+            if (this.currentShow.audio) this.currentShow.audio.duration = data.duration;
+            this.renderTimeline();
+          }
+
           // Prevent startup jitter: Allow 1.8s grace period while player buffers and stream starts.
           // Only snap after 1.8s and when backend has confirmed forward progress (data.current_time > 0.3s).
           if (elapsedSinceStart > 1800 && data.current_time > 0.3) {
@@ -2695,6 +2944,66 @@ data:
       const isActive = this.currentTime >= time && this.currentTime <= (time + duration);
       el.classList.toggle("cue-active-playing", isActive);
     });
+
+    this.updateHorizontalScrollbar();
+  }
+
+  updateHorizontalScrollbar() {
+    const container = this.dom.timelineContainer;
+    const track = this.dom.timelineScrollTrack;
+    const thumb = this.dom.timelineScrollThumb;
+    const label = this.dom.timelineScrollThumbLabel;
+    if (!container || !track || !thumb) return;
+
+    const scrollWidth = container.scrollWidth;
+    const clientWidth = container.clientWidth;
+    const maxScroll = Math.max(1, scrollWidth - clientWidth);
+
+    if (scrollWidth <= clientWidth) {
+      thumb.style.width = "100%";
+      thumb.style.left = "0px";
+      if (label) label.textContent = "100%";
+      return;
+    }
+
+    const trackWidth = track.clientWidth || 300;
+    const thumbWidth = Math.max(36, Math.min(trackWidth * 0.9, (clientWidth / scrollWidth) * trackWidth));
+    const scrollRatio = Math.min(1, Math.max(0, container.scrollLeft / maxScroll));
+    const thumbLeft = scrollRatio * (trackWidth - thumbWidth);
+
+    thumb.style.width = `${thumbWidth}px`;
+    thumb.style.left = `${thumbLeft}px`;
+
+    if (label) {
+      const curSec = (container.scrollLeft / this.zoom);
+      const m = Math.floor(curSec / 60);
+      const s = Math.floor(curSec % 60);
+      label.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    if (this.dom.zoomDisplay) {
+      this.dom.zoomDisplay.textContent = `${Math.round(this.zoom)} px/s`;
+    }
+  }
+
+  fitSongToScreen() {
+    const totalDuration = this.currentShow.duration || 240.0;
+    const container = this.dom.timelineContainer;
+    if (!container) return;
+
+    // Timeline visible lane width (excluding track headers ~220px)
+    const headerWidth = 220;
+    const availableWidth = Math.max(400, container.clientWidth - headerWidth - 40);
+    const idealZoom = Math.max(10, Math.min(250, availableWidth / (totalDuration + 2)));
+
+    this.zoom = parseFloat(idealZoom.toFixed(1));
+    if (this.dom.zoomSlider) this.dom.zoomSlider.value = this.zoom;
+    if (this.dom.zoomDisplay) this.dom.zoomDisplay.textContent = `${Math.round(this.zoom)} px/s`;
+
+    this.renderTimeline();
+    container.scrollLeft = 0;
+    this.updateHorizontalScrollbar();
+    this.showToast(`↔️ Zoom angepasst: Ganzes Lied (${this.formatTime(totalDuration)}) im Blick`);
   }
 
   updateTimeDisplay() {

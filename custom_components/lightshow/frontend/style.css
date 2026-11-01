@@ -424,27 +424,29 @@ html, body {
   display: flex;
   flex-direction: column;
   position: relative;
-  scrollbar-width: thin;
-  scrollbar-color: var(--cyan-accent) #1e2638;
+  scrollbar-width: auto;
+  scrollbar-color: #00d2ff #0a0e17;
 }
 
 .timeline-container::-webkit-scrollbar {
-  width: 8px;
-  height: 10px;
+  width: 10px;
+  height: 14px;
 }
 
 .timeline-container::-webkit-scrollbar-track {
-  background: #111622;
+  background: #0a0e17;
+  border-top: 1px solid var(--border-color);
 }
 
 .timeline-container::-webkit-scrollbar-thumb {
-  background: #2a354c;
-  border-radius: 5px;
-  border: 2px solid #111622;
+  background: linear-gradient(135deg, #0284c7, #00d2ff);
+  border-radius: 7px;
+  border: 3px solid #0a0e17;
 }
 
 .timeline-container::-webkit-scrollbar-thumb:hover {
-  background: var(--cyan-accent);
+  background: #00d2ff;
+  box-shadow: 0 0 10px rgba(0, 210, 255, 0.8);
 }
 
 .track-row {
@@ -1800,4 +1802,223 @@ html, body {
 .track-fade-input:focus {
   border-color: var(--cyan-accent);
   box-shadow: 0 0 6px rgba(0, 210, 255, 0.3);
+}
+
+/* --- Dedicated Permanent Horizontal Timeline Scrollbar & Zoom Navigator --- */
+.timeline-scrollbar-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: #111622;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+  z-index: 50;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.25);
+}
+
+.btn-scroll-nav {
+  background: #1a2234;
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  border-radius: 4px;
+  width: 26px;
+  height: 24px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.btn-scroll-nav:hover {
+  background: var(--bg-hover);
+  border-color: var(--cyan-accent);
+  color: var(--cyan-accent);
+}
+
+.timeline-scroll-track {
+  flex: 1;
+  height: 24px;
+  background: #0a0d14;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.7);
+}
+
+.timeline-scroll-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  min-width: 48px;
+  background: linear-gradient(135deg, #0284c7, #00d2ff);
+  border-radius: 4px;
+  cursor: grab;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 210, 255, 0.4);
+  transition: box-shadow 0.15s ease;
+}
+
+.timeline-scroll-thumb:hover {
+  box-shadow: 0 0 12px rgba(0, 210, 255, 0.75);
+}
+
+.timeline-scroll-thumb:active {
+  cursor: grabbing;
+  background: linear-gradient(135deg, #0369a1, #38bdf8);
+}
+
+.timeline-scroll-thumb-label {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #0b1120;
+  pointer-events: none;
+  user-select: none;
+  letter-spacing: -0.3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.timeline-scroll-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.zoom-display {
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  min-width: 55px;
+  text-align: center;
+}
+
+/* --- Transport Blackout Button & Bottom Bar Blackout --- */
+.btn-transport-blackout {
+  background: rgba(220, 38, 38, 0.22) !important;
+  border: 1px solid #ef4444 !important;
+  color: #fecaca !important;
+  font-weight: 700 !important;
+  font-size: 11px !important;
+  padding: 0 10px !important;
+  width: auto !important;
+  min-width: 76px;
+  height: 30px !important;
+  border-radius: 6px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-transport-blackout:hover {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.65) !important;
+  transform: translateY(-1px);
+}
+
+.btn-blackout-bar {
+  background: rgba(220, 38, 38, 0.2) !important;
+  border: 1px solid #ef4444 !important;
+  color: #fca5a5 !important;
+  font-weight: 700 !important;
+  transition: all 0.15s ease;
+}
+
+.btn-blackout-bar:hover {
+  background: #dc2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.55) !important;
+}
+
+/* --- Lamp Track Header Controls --- */
+.track-actions-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-track-settings {
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #182030;
+  border: 1px solid var(--border-color);
+  color: #94a3b8;
+  transition: all 0.15s ease;
+}
+
+.btn-track-settings:hover {
+  color: var(--cyan-accent);
+  border-color: var(--cyan-accent);
+  background: var(--bg-hover);
+}
+
+.track-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.badge-fade-btn {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  color: #38bdf8;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.badge-fade-btn:hover {
+  background: rgba(56, 189, 248, 0.28);
+  border-color: #38bdf8;
+  box-shadow: 0 0 6px rgba(56, 189, 248, 0.4);
+}
+
+/* --- Topdeck Responsive Wrap Enhancements --- */
+@media (max-width: 1400px) {
+  .engine-hub {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1280px) {
+  .sub-deck-row {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .audio-hub {
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+  }
+  .tools-hub {
+    margin-left: auto !important;
+  }
 }

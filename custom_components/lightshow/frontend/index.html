@@ -39,12 +39,14 @@
             <button id="btn-pause" class="btn-transport btn-transport-pause" title="Pausieren (Leertaste)" style="display:none;">⏸</button>
             <button id="btn-stop" class="btn-transport" title="Stopp">⏹</button>
             <button id="btn-loop" class="btn-transport btn-transport-toggle" title="Endlosschleife (Loop)">🔁</button>
+            <button id="btn-blackout-transport" class="btn-transport btn-transport-blackout" title="Alle Lampen sofort ausschalten (Blackout) [Esc]">⏻ Blackout</button>
           </div>
 
-          <div class="timecode-display" title="Aktuelle Position / Gesamtdauer">
+          <div class="timecode-display" title="Aktuelle Position / Gesamtdauer (Klicken zum Ändern der Songlänge)">
             <span id="time-current" class="timecode-digits">00:00.000</span>
             <span class="timecode-sep">/</span>
-            <span id="time-total" class="timecode-total">00:00.000</span>
+            <span id="time-total" class="timecode-total" style="cursor:pointer;" title="Klicken, um Gesamtdauer zu ändern">00:00.000</span>
+            <span id="btn-edit-duration" style="font-size:11px; cursor:pointer; opacity:0.7;" title="Songlänge ändern">✏️</span>
           </div>
         </div>
 
@@ -141,10 +143,28 @@
 
       </div>
 
+      <!-- Dedicated Permanent Horizontal Timeline Scrollbar & Zoom Navigator -->
+      <div class="timeline-scrollbar-bar" id="timeline-scroll-bar">
+        <button id="btn-scroll-left" class="btn-scroll-nav" title="Nach links scrollen (◀)">◀</button>
+        <div class="timeline-scroll-track" id="timeline-scroll-track" title="Klicken oder Ziehen, um durch das ganze Lied zu scrollen">
+          <div class="timeline-scroll-thumb" id="timeline-scroll-thumb">
+            <span class="timeline-scroll-thumb-label" id="timeline-scroll-thumb-label">00:00</span>
+          </div>
+        </div>
+        <button id="btn-scroll-right" class="btn-scroll-nav" title="Nach rechts scrollen (▶)">▶</button>
+        <div class="timeline-scroll-tools">
+          <button id="btn-zoom-fit" class="btn-micro btn-pill-accent" title="Ganzes Lied im Fenster anzeigen (Fit to Screen)">↔ Ganzes Lied</button>
+          <button id="btn-zoom-out" class="btn-micro btn-secondary" title="Herauszoomen">🔍−</button>
+          <span id="zoom-display" class="zoom-display">70 px/s</span>
+          <button id="btn-zoom-in" class="btn-micro btn-secondary" title="Heranzoomen">🔍+</button>
+        </div>
+      </div>
+
       <!-- Add Track Button Bar -->
       <div class="add-track-bar">
         <button id="btn-add-light" class="btn btn-secondary">+ Lampe / WLED-Streifen hinzufügen</button>
         <button id="btn-add-cue-all" class="btn btn-accent" style="margin-left: 12px;" title="Fügt an der aktuellen Abspielposition für alle Lampen einen Keyframe ein">+ Cue an Cursor für alle Lampen</button>
+        <button id="btn-blackout-bottom" class="btn btn-danger btn-blackout-bar" style="margin-left: auto;" title="Alle Show-Lampen sofort ausschalten (Blackout) [Esc]">⏻ Blackout (Alle Lampen Aus)</button>
       </div>
     </main>
 
@@ -248,6 +268,58 @@
           <button id="btn-test-cue-live" class="btn btn-accent" title="Sendet diesen Cue sofort an die Lampe zum Anschauen">💡 Am Gerät testen</button>
           <button id="btn-delete-cue" class="btn btn-danger">Löschen</button>
           <button id="btn-save-cue" class="btn btn-primary">Übernehmen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lamp Settings Modal (Dedicated Fade In & Fade Out for Lamps) -->
+    <div id="lamp-settings-modal" class="modal-overlay hidden">
+      <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+          <h3 id="lamp-settings-title">💡 Lampen-Einstellungen</h3>
+          <button id="btn-close-lamp-settings" class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row">
+            <label>Name der Lampe / Spur:</label>
+            <input type="text" id="lamp-name-input" class="text-input" placeholder="Lampenname...">
+          </div>
+
+          <div class="form-row">
+            <label>Home Assistant Entity:</label>
+            <input type="text" id="lamp-entity-display" class="text-input" readonly style="opacity: 0.7; background: #0c1017;">
+          </div>
+
+          <div class="form-row form-row-dual" style="display:flex; gap:12px;">
+            <div class="form-col" style="flex:1;">
+              <label style="color:var(--cyan-accent); font-weight:700;">Fade In Zeit (Einschalten):</label>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <input type="number" id="lamp-fade-in-input" step="0.1" min="0" max="10" value="0.0" class="number-input" style="width:100%;">
+                <span class="hint">Sek.</span>
+              </div>
+              <small class="hint">Sanftes Aufblenden beim Start</small>
+            </div>
+            <div class="form-col" style="flex:1;">
+              <label style="color:#c084fc; font-weight:700;">Fade Out Zeit (Ausschalten):</label>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <input type="number" id="lamp-fade-out-input" step="0.1" min="0" max="10" value="0.5" class="number-input" style="width:100%;">
+                <span class="hint">Sek.</span>
+              </div>
+              <small class="hint">Sanftes Abblenden beim Ende</small>
+            </div>
+          </div>
+
+          <div class="form-row" style="background: rgba(255,255,255,0.03); padding: 10px 12px; border-radius: 6px; border: 1px solid var(--border-color);">
+            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:12px; color:var(--text-main);">
+              <input type="checkbox" id="lamp-apply-existing-cues" checked style="margin-top: 2px;">
+              <span><strong>Auch auf bestehende Segmente anwenden:</strong> Überträgt diese Fade In/Out Zeiten sofort auf alle vorhandenen Segmente dieser Lampe.</span>
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btn-test-lamp-live" class="btn btn-accent">💡 Lampe testen</button>
+          <button id="btn-cancel-lamp-settings" class="btn btn-secondary">Abbrechen</button>
+          <button id="btn-save-lamp-settings" class="btn btn-primary">Speichern & Übernehmen</button>
         </div>
       </div>
     </div>
