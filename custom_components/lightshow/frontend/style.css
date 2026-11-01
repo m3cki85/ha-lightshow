@@ -1723,3 +1723,81 @@ html, body {
     gap: 8px !important;
   }
 }
+
+/* --- Blackout Button --- */
+.btn-pill-blackout {
+  background: rgba(239, 68, 68, 0.16) !important;
+  border: 1px solid rgba(239, 68, 68, 0.6) !important;
+  color: #fca5a5 !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-pill-blackout:hover {
+  background: #dc2626 !important;
+  border-color: #ef4444 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.55);
+  transform: translateY(-1px);
+}
+
+.btn-pill-blackout:active {
+  transform: translateY(0);
+  background: #b91c1c !important;
+}
+
+/* --- Player Audio Latency Delay --- */
+.player-delay-wrapper {
+  transition: border-color 0.2s ease;
+}
+
+.player-delay-wrapper:focus-within {
+  border-color: var(--cyan-accent) !important;
+  box-shadow: 0 0 8px rgba(0, 210, 255, 0.25);
+}
+
+.delay-input {
+  font-family: 'JetBrains Mono', monospace;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.delay-input::-webkit-inner-spin-button,
+.delay-input::-webkit-outer-spin-button {
+  opacity: 0.6;
+}
+
+/* --- Track Header Fade Defaults --- */
+.track-fade-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+  margin: 2px 0 4px 0;
+}
+
+.track-fade-input {
+  width: 42px;
+  height: 20px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  background: #0b0e14;
+  border: 1px solid #334155;
+  color: #38bdf8;
+  border-radius: 4px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.track-fade-input[data-fade="out"] {
+  color: #c084fc;
+}
+
+.track-fade-input:focus {
+  border-color: var(--cyan-accent);
+  box-shadow: 0 0 6px rgba(0, 210, 255, 0.3);
+}

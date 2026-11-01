@@ -48,13 +48,18 @@
           </div>
         </div>
 
-        <!-- Right: Active Player & Export -->
+        <!-- Right: Active Player, Latency Delay & Export -->
         <div class="deck-group player-export-group" style="display:flex; align-items:center; gap:8px;">
           <div class="player-select-wrapper" style="display:flex; align-items:center; gap:6px; background:#111520; border:1px solid var(--border-color); border-radius:6px; padding:3px 8px;" title="Ausgabe-Lautsprecher / Web Player für Music Assistant">
             <span style="font-size:12px; color:var(--cyan-accent); font-weight:700;">Player:</span>
             <select id="player-select" class="select-pill speaker-select-pill" title="Ausgabe-Lautsprecher / Web Player für Music Assistant">
               <option value="">-- Lautsprecher wählen --</option>
             </select>
+          </div>
+          <div class="player-delay-wrapper" style="display:flex; align-items:center; gap:4px; background:#111520; border:1px solid var(--border-color); border-radius:6px; padding:3px 8px;" title="Lautsprecher Audio-Latenzverzögerung in Millisekunden (z.B. +400ms für verzögerte Bluetooth/AirPlay/Sonos/Chromecast Lautsprecher, damit Licht und Ton synchron sind)">
+            <span style="font-size:12px; color:var(--text-secondary); font-weight:600;">Delay:</span>
+            <input type="number" id="audio-delay-input" class="input-pill delay-input" style="width:62px; text-align:center; padding:2px 4px; font-size:12px; font-weight:700; color:var(--cyan-accent); background:#0a0d14; border:1px solid var(--border-color); border-radius:4px;" value="0" step="50" min="-2000" max="5000">
+            <span style="font-size:11px; color:var(--text-muted);">ms</span>
           </div>
           <button id="btn-export-yaml" class="btn-pill btn-pill-accent" title="In Home Assistant Automation nutzen">📋 YAML</button>
         </div>
@@ -82,7 +87,7 @@
           <span class="badge badge-wled" title="Vollständige Music Assistant Playback-Engine aktiv">⚡ Music Assistant Engine</span>
         </div>
 
-        <!-- Studio Tools (Snap, Zoom, +Lampe) -->
+        <!-- Studio Tools (Snap, Zoom, +Lampe, Blackout) -->
         <div class="deck-group tools-hub">
           <div class="tool-item">
             <span class="deck-label">Snap:</span>
@@ -101,6 +106,7 @@
           </div>
 
           <button id="btn-quick-add-light" class="btn-pill btn-pill-primary" title="Lampe oder WLED-Streifen zur Show hinzufügen">💡 + Lampe</button>
+          <button id="btn-blackout" class="btn-pill btn-pill-blackout" title="Alle Lampen in dieser Show sofort ausschalten (Blackout) [Esc]">⏻ Blackout</button>
         </div>
       </div>
     </header>
@@ -210,11 +216,24 @@
               </div>
             </div>
 
-            <div class="form-row">
-              <label>Übergangszeit (Fade in Sek.):</label>
-              <input type="number" id="cue-transition-input" step="0.1" min="0" max="10" value="0.0" class="number-input">
-              <small class="hint">Tipp: Für sanfte Fades bei Zigbee-Lampen 0.5s - 2.0s wählen.</small>
+            <div class="form-row form-row-dual" style="display:flex; gap:12px;">
+              <div class="form-col" style="flex:1;">
+                <label>Fade In (Start):</label>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input type="number" id="cue-fade-in-input" step="0.1" min="0" max="10" value="0.0" class="number-input" style="width:100%;">
+                  <span class="hint">s</span>
+                </div>
+              </div>
+              <div class="form-col" style="flex:1;">
+                <label>Fade Out (Ende):</label>
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <input type="number" id="cue-fade-out-input" step="0.1" min="0" max="10" value="0.5" class="number-input" style="width:100%;">
+                  <span class="hint">s</span>
+                </div>
+              </div>
             </div>
+            <input type="hidden" id="cue-transition-input" value="0.0">
+            <small class="hint" style="margin-top:-6px; display:block;">Fade In beim Einschalten, Fade Out beim automatischen Ausschalten nach Ende der Leuchtdauer.</small>
 
             <div class="form-row" id="wled-effect-container">
               <label>WLED Effekt:</label>

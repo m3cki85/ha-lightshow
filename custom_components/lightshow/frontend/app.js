@@ -41,6 +41,7 @@ class LightShowStudio {
       audioFileInput: document.getElementById("audio-file-input"),
       directAudioFileInput: document.getElementById("direct-audio-file-input"),
       playerSelect: document.getElementById("player-select"),
+      audioDelayInput: document.getElementById("audio-delay-input"),
       modeBrowser: document.getElementById("mode-browser"),
       modeSpeaker: document.getElementById("mode-speaker"),
       btnPlay: document.getElementById("btn-play"),
@@ -48,6 +49,7 @@ class LightShowStudio {
       btnStop: document.getElementById("btn-stop"),
       btnRewind: document.getElementById("btn-rewind"),
       btnLoop: document.getElementById("btn-loop"),
+      btnBlackout: document.getElementById("btn-blackout"),
       timeCurrent: document.getElementById("time-current"),
       timeTotal: document.getElementById("time-total"),
       snapSelect: document.getElementById("snap-select"),
@@ -85,6 +87,8 @@ class LightShowStudio {
       cueColorPicker: document.getElementById("cue-color-picker"),
       cueColorHex: document.getElementById("cue-color-hex"),
       cueTransitionInput: document.getElementById("cue-transition-input"),
+      cueFadeInInput: document.getElementById("cue-fade-in-input"),
+      cueFadeOutInput: document.getElementById("cue-fade-out-input"),
       wledEffectContainer: document.getElementById("wled-effect-container"),
       cueEffectSelect: document.getElementById("cue-effect-select"),
       btnTestCueLive: document.getElementById("btn-test-cue-live"),
@@ -286,10 +290,20 @@ class LightShowStudio {
       });
     }
 
-    // Player Select
+    // Player Select & Audio Latency Delay
     this.dom.playerSelect.addEventListener("change", (e) => {
       this.currentShow.settings.default_player_entity_id = e.target.value;
     });
+    if (this.dom.audioDelayInput) {
+      this.dom.audioDelayInput.addEventListener("change", (e) => {
+        this.currentShow.settings.audio_delay_ms = parseInt(e.target.value, 10) || 0;
+      });
+    }
+
+    // Blackout Button (Emergency All-Off)
+    if (this.dom.btnBlackout) {
+      this.dom.btnBlackout.addEventListener("click", () => this.blackout());
+    }
 
     // Modals
     this.dom.btnAddLight.addEventListener("click", () => this.openAddLightModal());
@@ -412,6 +426,12 @@ class LightShowStudio {
           this.deleteSelectedCue();
         }
       } else if (e.key === "Escape") {
+        const modalOpen = (this.dom.cueModal && !this.dom.cueModal.classList.contains("hidden"))
+          || (this.dom.mediaModal && !this.dom.mediaModal.classList.contains("hidden"))
+          || (this.dom.audioManagerModal && !this.dom.audioManagerModal.classList.contains("hidden"))
+          || (this.dom.addLightModal && !this.dom.addLightModal.classList.contains("hidden"))
+          || (this.dom.exportModal && !this.dom.exportModal.classList.contains("hidden"));
+
         this.hideContextMenu();
         this.deselectCue();
         if (this.dom.cueModal && !this.dom.cueModal.classList.contains("hidden")) this.closeInspector();
@@ -419,6 +439,11 @@ class LightShowStudio {
         if (this.dom.audioManagerModal && !this.dom.audioManagerModal.classList.contains("hidden")) this.dom.audioManagerModal.classList.add("hidden");
         if (this.dom.addLightModal && !this.dom.addLightModal.classList.contains("hidden")) this.dom.addLightModal.classList.add("hidden");
         if (this.dom.exportModal && !this.dom.exportModal.classList.contains("hidden")) this.dom.exportModal.classList.add("hidden");
+
+        // If no modal was open, Escape acts as immediate Blackout
+        if (!modalOpen && !isInput) {
+          this.blackout();
+        }
       } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !isInput && this.selectedCueRef) {
         e.preventDefault();
         const { trackId, cueIdx } = this.selectedCueRef;
@@ -1009,6 +1034,10 @@ class LightShowStudio {
       this.dom.playerSelect.value = this.currentShow.settings.default_player_entity_id;
     }
 
+    if (this.dom.audioDelayInput) {
+      this.dom.audioDelayInput.value = this.currentShow.settings.audio_delay_ms ?? 0;
+    }
+
     this.isLooping = !!this.currentShow.settings.loop;
     this.dom.btnLoop.classList.toggle("active", this.isLooping);
 
@@ -1239,6 +1268,9 @@ class LightShowStudio {
       header.className = "track-header";
       
       const isWled = track.type === "wled";
+      const defaultFadeIn = track.default_fade_in !== undefined ? track.default_fade_in : 0.0;
+      const defaultFadeOut = track.default_fade_out !== undefined ? track.default_fade_out : 0.5;
+
       header.innerHTML = `
         <div>
           <div class="track-header-top">
@@ -1251,12 +1283,33 @@ class LightShowStudio {
           <div class="track-badges">
             <span class="badge ${isWled ? 'badge-wled' : 'badge-zigbee'}">${isWled ? 'WLED' : 'Standard/Zigbee'}</span>
           </div>
+          <div class="track-fade-row" title="Standard Fade In (Start) und Fade Out (Ende) in Sekunden für diese Lampe">
+            <span>Fade:</span>
+            <input type="number" class="track-fade-input" data-track-id="${track.id}" data-fade="in" value="${defaultFadeIn}" step="0.1" min="0" max="10" title="Standard Fade In (Start) in Sek.">
+            <span>/</span>
+            <input type="number" class="track-fade-input" data-track-id="${track.id}" data-fade="out" value="${defaultFadeOut}" step="0.1" min="0" max="10" title="Standard Fade Out (Ende) in Sek.">
+            <span>s</span>
+          </div>
           <div class="track-controls-bar">
             <button class="btn-track-toggle" data-action="toggle-live" title="Lampe jetzt sofort an-/ausschalten">⏻ Schalten</button>
             <button class="btn-track-cue" data-action="add-cue-cursor" title="Keyframe an Cursorposition einfügen">+ Cue (${this.currentTime.toFixed(1)}s)</button>
           </div>
         </div>
       `;
+
+      // Track-level Fade In/Out input changes
+      header.querySelectorAll(".track-fade-input").forEach(input => {
+        input.addEventListener("change", (e) => {
+          const type = e.target.dataset.fade;
+          const val = Math.max(0, parseFloat(e.target.value) || 0.0);
+          e.target.value = val;
+          if (type === "in") {
+            track.default_fade_in = val;
+          } else {
+            track.default_fade_out = val;
+          }
+        });
+      });
 
       // Live Toggle Action
       header.querySelector('[data-action="toggle-live"]').addEventListener("click", async (e) => {
@@ -1606,13 +1659,18 @@ class LightShowStudio {
     const track = this.currentShow.tracks.find(t => t.id === trackId);
     if (!track) return;
 
+    const defaultFadeIn = track.default_fade_in !== undefined ? track.default_fade_in : (track.type === "wled" ? 0.0 : 0.0);
+    const defaultFadeOut = track.default_fade_out !== undefined ? track.default_fade_out : 0.5;
+
     const newCue = {
       time: Math.max(0, parseFloat(time.toFixed(2))),
       duration: 2.0,
       state: "on",
       brightness: 255,
       rgb_color: [255, 0, 100],
-      transition: track.type === "wled" ? 0.0 : 0.5,
+      fade_in: defaultFadeIn,
+      fade_out: defaultFadeOut,
+      transition: defaultFadeIn,
       effect: "",
     };
 
@@ -1646,7 +1704,14 @@ class LightShowStudio {
       this.dom.cueColorHex.textContent = hex;
     }
 
-    this.dom.cueTransitionInput.value = cue.transition || 0.0;
+    const defaultFadeIn = track.default_fade_in !== undefined ? track.default_fade_in : 0.0;
+    const defaultFadeOut = track.default_fade_out !== undefined ? track.default_fade_out : 0.5;
+    const fadeIn = cue.fade_in !== undefined ? cue.fade_in : (cue.transition !== undefined ? cue.transition : defaultFadeIn);
+    const fadeOut = cue.fade_out !== undefined ? cue.fade_out : defaultFadeOut;
+
+    if (this.dom.cueFadeInInput) this.dom.cueFadeInInput.value = fadeIn;
+    if (this.dom.cueFadeOutInput) this.dom.cueFadeOutInput.value = fadeOut;
+    if (this.dom.cueTransitionInput) this.dom.cueTransitionInput.value = fadeIn;
 
     // WLED Effects
     const lightMeta = this.lights.find(l => l.entity_id === track.entity_id);
@@ -1687,12 +1752,20 @@ class LightShowStudio {
       cue.duration = Math.max(0.1, parseFloat(parseFloat(this.dom.cueDurationInput.value || 2.0).toFixed(2)));
     }
     cue.state = this.dom.cueStateOn.classList.contains("active") ? "on" : "off";
+
+    const fadeIn = this.dom.cueFadeInInput ? (parseFloat(this.dom.cueFadeInInput.value) || 0.0) : (parseFloat(this.dom.cueTransitionInput?.value) || 0.0);
+    const fadeOut = this.dom.cueFadeOutInput ? (parseFloat(this.dom.cueFadeOutInput.value) || 0.0) : 0.5;
     
     if (cue.state === "on") {
       cue.brightness = parseInt(this.dom.cueBrightnessSlider.value, 10);
       cue.rgb_color = this.hexToRgb(this.dom.cueColorPicker.value);
-      cue.transition = parseFloat(this.dom.cueTransitionInput.value);
+      cue.fade_in = fadeIn;
+      cue.fade_out = fadeOut;
+      cue.transition = fadeIn;
       cue.effect = this.dom.cueEffectSelect.value || "";
+    } else {
+      cue.fade_out = fadeOut;
+      cue.transition = fadeOut;
     }
 
     track.cues.sort((a, b) => a.time - b.time);
@@ -2009,11 +2082,17 @@ class LightShowStudio {
     const track = this.currentShow.tracks.find(t => t.id === trackId);
     if (!track) return;
 
+    const isOn = this.dom.cueStateOn.classList.contains("active");
+    const fadeIn = this.dom.cueFadeInInput ? (parseFloat(this.dom.cueFadeInInput.value) || 0.0) : 0.0;
+    const fadeOut = this.dom.cueFadeOutInput ? (parseFloat(this.dom.cueFadeOutInput.value) || 0.0) : 0.5;
+
     const cuePayload = {
-      state: this.dom.cueStateOn.classList.contains("active") ? "on" : "off",
+      state: isOn ? "on" : "off",
       brightness: parseInt(this.dom.cueBrightnessSlider.value, 10),
       rgb_color: this.hexToRgb(this.dom.cueColorPicker.value),
-      transition: parseFloat(this.dom.cueTransitionInput.value),
+      fade_in: fadeIn,
+      fade_out: fadeOut,
+      transition: isOn ? fadeIn : fadeOut,
       duration: parseFloat(this.dom.cueDurationInput?.value || 2.0),
       effect: this.dom.cueEffectSelect.value || "",
     };
@@ -2187,6 +2266,9 @@ class LightShowStudio {
     try {
       this.currentShow.settings.default_player_entity_id = this.dom.playerSelect.value;
       this.currentShow.settings.loop = this.isLooping;
+      if (this.dom.audioDelayInput) {
+        this.currentShow.settings.audio_delay_ms = parseInt(this.dom.audioDelayInput.value, 10) || 0;
+      }
 
       const res = await fetch(`${this.apiBase}/shows`, {
         method: "POST",
@@ -2349,8 +2431,16 @@ data:
       return;
     }
 
+    const audioDelayMs = parseInt(this.dom.audioDelayInput?.value, 10) || 0;
     this.currentShow.settings.default_player_entity_id = selectedPlayer;
     this.currentShow.settings.loop = this.isLooping;
+    this.currentShow.settings.audio_delay_ms = audioDelayMs;
+
+    this.playbackStartedAt = performance.now();
+    this.playStartTime = this.playbackStartedAt;
+    this.playStartPos = this.currentTime;
+    this.lastTickTime = this.playbackStartedAt;
+    this.audioDelaySec = audioDelayMs / 1000.0;
 
     // Start or resume playback through Music Assistant engine
     try {
@@ -2367,6 +2457,7 @@ data:
           player_entity_id: selectedPlayer,
           start_time: this.currentTime,
           loop: this.isLooping,
+          audio_delay_ms: audioDelayMs,
         }),
       });
       const data = await res.json();
@@ -2447,6 +2538,47 @@ data:
     this.updateTimeDisplay();
   }
 
+  async blackout() {
+    // If playing, stop transport loop immediately
+    if (this.isPlaying) {
+      this.isPlaying = false;
+      this.isPaused = false;
+      this.dom.btnPlay.style.display = "flex";
+      this.dom.btnPause.style.display = "none";
+      if (this.dom.audioPlayer) {
+        try {
+          this.dom.audioPlayer.pause();
+          this.dom.audioPlayer.currentTime = 0;
+        } catch (e) {}
+      }
+      if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
+    }
+
+    try {
+      await fetch(`${this.apiBase}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "blackout",
+          show_id: this.currentShow.id,
+          entity_ids: (this.currentShow.tracks || []).map(t => t.entity_id).filter(Boolean),
+        }),
+      });
+    } catch (err) {
+      console.warn("Blackout API call error:", err);
+    }
+
+    // Instantly reset visual indicators
+    document.querySelectorAll(".lamp-status-dot").forEach(dot => {
+      dot.style.background = "#334155";
+    });
+    document.querySelectorAll(".btn-track-toggle").forEach(btn => {
+      btn.classList.remove("on");
+    });
+
+    this.showToast("⏻ Blackout: Alle Lampen sofort ausgeschaltet!");
+  }
+
   async seek(targetTime) {
     this.currentTime = Math.max(0, Math.min(targetTime, this.currentShow.duration || 60));
     if (this.isPaused) {
@@ -2462,6 +2594,9 @@ data:
     // When paused or stopped, seeking only moves the timeline cursor.
     // When the user hits Play, play() will pass start_time: this.currentTime!
     if (this.isPlaying) {
+      this.playStartPos = this.currentTime;
+      this.playStartTime = performance.now();
+      this.audioDelaySec = 0;
       try {
         await fetch(`${this.apiBase}/control`, {
           method: "POST",
@@ -2476,9 +2611,14 @@ data:
     if (!this.isPlaying) return;
 
     const now = performance.now();
-    const delta = (now - this.lastTickTime) / 1000;
-    this.currentTime += delta;
-    this.lastTickTime = now;
+    const elapsedSec = (now - (this.playStartTime || now)) / 1000;
+    const effectiveSec = elapsedSec - (this.audioDelaySec || 0);
+
+    if (effectiveSec < 0) {
+      this.currentTime = this.playStartPos !== undefined ? this.playStartPos : 0;
+    } else {
+      this.currentTime = (this.playStartPos !== undefined ? this.playStartPos : 0) + effectiveSec;
+    }
 
     // Check end of show
     if (this.currentTime >= (this.currentShow.duration || 60)) {
@@ -2502,16 +2642,27 @@ data:
       try {
         const res = await fetch(`${this.apiBase}/status`);
         const data = await res.json();
+        const elapsedSinceStart = performance.now() - (this.playbackStartedAt || 0);
+
         if (data && data.state === "playing" && typeof data.current_time === "number") {
-          // If local clock drifted more than 0.35s from Music Assistant player, smoothly align
-          const diff = Math.abs(this.currentTime - data.current_time);
-          if (diff > 0.35) {
-            this.currentTime = data.current_time;
-            this.updatePlayheadPosition();
-            this.updateTimeDisplay();
+          // Prevent startup jitter: Allow 1.8s grace period while player buffers and stream starts.
+          // Only snap after 1.8s and when backend has confirmed forward progress (data.current_time > 0.3s).
+          if (elapsedSinceStart > 1800 && data.current_time > 0.3) {
+            const diff = Math.abs(this.currentTime - data.current_time);
+            if (diff > 0.45) {
+              this.currentTime = data.current_time;
+              this.playStartPos = data.current_time;
+              this.playStartTime = performance.now();
+              this.audioDelaySec = 0;
+              this.updatePlayheadPosition();
+              this.updateTimeDisplay();
+            }
           }
         } else if (data && (data.state === "idle" || data.state === "stopped")) {
-          this.stop();
+          // Avoid premature stop during initial play warmup
+          if (elapsedSinceStart > 1500) {
+            this.stop();
+          }
         } else if (data && data.state === "paused" && this.isPlaying) {
           this.pause();
         }

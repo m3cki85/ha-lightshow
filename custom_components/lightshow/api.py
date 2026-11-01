@@ -252,16 +252,24 @@ class LightShowControlView(LightShowBaseView):
                 player = data.get("player_entity_id")
                 start_time = float(data.get("start_time", 0.0))
                 loop = data.get("loop")
+                audio_delay_ms = data.get("audio_delay_ms")
                 success = await self.engine.async_play(
                     show_id=show_id,
                     player_entity_id=player,
                     loop=loop,
                     start_time=start_time,
+                    audio_delay_ms=audio_delay_ms,
                 )
                 return self.json({"success": success})
 
             elif action == "stop":
                 await self.engine.async_stop()
+                return self.json({"success": True})
+
+            elif action == "blackout":
+                show_id = data.get("show_id")
+                entity_ids = data.get("entity_ids")
+                await self.engine.async_blackout(show_id=show_id, entity_ids=entity_ids)
                 return self.json({"success": True})
 
             elif action == "pause":

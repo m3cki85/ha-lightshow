@@ -40,6 +40,7 @@ class LightShowEngine:
         self._duration: float = 0.0
         self._loop: bool = False
         self._fade_out_on_stop: bool = False
+        self._audio_delay_ms: float = 0.0
 
         self._pause_event = asyncio.Event()
         self._pause_event.set()
@@ -74,6 +75,7 @@ class LightShowEngine:
             "duration": round(self._duration, 3),
             "player_entity_id": self._player_entity_id,
             "loop": self._loop,
+            "audio_delay_ms": round(self._audio_delay_ms, 1),
         }
 
     async def async_play(
@@ -82,6 +84,7 @@ class LightShowEngine:
         player_entity_id: Optional[str] = None,
         loop: Optional[bool] = None,
         start_time: float = 0.0,
+        audio_delay_ms: Optional[float] = None,
     ) -> bool:
         """Start or restart playing a lightshow."""
         # Stop existing show if running
@@ -98,6 +101,9 @@ class LightShowEngine:
         settings = show_data.get("settings", {})
         self._loop = loop if loop is not None else settings.get("loop", False)
         self._fade_out_on_stop = settings.get("fade_out_on_stop", True)
+        self._audio_delay_ms = float(
+            audio_delay_ms if audio_delay_ms is not None else settings.get("audio_delay_ms", 0.0)
+        )
 
         # Determine target player
         self._player_entity_id = (
@@ -215,6 +221,44 @@ class LightShowEngine:
         """Instantly apply a cue to a lamp (used for live preview in the studio editor)."""
         await self._dispatch_cue_to_light(entity_id, cue)
 
+    async def async_blackout(
+        self,
+        show_id: Optional[str] = None,
+        entity_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Instantly turn off all lights configured in current show or specified show/entities, stopping playback if active."""
+        if self._state == "playing":
+            self._fade_out_on_stop = False
+            await self.async_stop()
+
+        targets = set()
+        if entity_ids:
+            for eid in entity_ids:
+                if eid:
+                    targets.add(eid)
+
+        show = self._current_show
+        if not show and show_id:
+            show = await self.storage.async_get_show(show_id)
+
+        if show:
+            for track in show.get("tracks", []):
+                eid = track.get("entity_id")
+                if eid:
+                    targets.add(eid)
+
+        _LOGGER.info("Executing blackout on %d light entities: %s", len(targets), list(targets))
+        for eid in targets:
+            try:
+                await self.hass.services.async_call(
+                    "light",
+                    "turn_off",
+                    {"entity_id": eid, "transition": 0.0},
+                    blocking=False,
+                )
+            except Exception as err:
+                _LOGGER.warning("Could not blackout %s: %s", eid, err)
+
     def _set_state(self, new_state: str) -> None:
         """Update state and fire Home Assistant event."""
         if self._state != new_state:
@@ -242,13 +286,24 @@ class LightShowEngine:
                 continue
             track_type = track.get("type", "standard")
             cues = track.get("cues", [])
+            default_fade_in = float(track.get("default_fade_in", 0.0))
+            default_fade_out = float(track.get("default_fade_out", 0.5))
+
             for cue in cues:
                 cue_time = float(cue.get("time", 0.0))
+                cue_fade_in = float(cue.get("fade_in", cue.get("transition", default_fade_in)))
+                cue_fade_out = float(cue.get("fade_out", default_fade_out))
+
+                cue_payload = dict(cue)
+                cue_payload["transition"] = cue_fade_in
+                cue_payload["fade_in"] = cue_fade_in
+                cue_payload["fade_out"] = cue_fade_out
+
                 flattened_cues.append({
                     "time": cue_time,
                     "entity_id": entity_id,
                     "track_type": track_type,
-                    "cue": cue,
+                    "cue": cue_payload,
                 })
 
                 # If cue has duration and turns on light, add automatic off at end of duration
@@ -257,14 +312,14 @@ class LightShowEngine:
                     end_time = round(cue_time + cue_dur, 2)
                     has_immediate_next = any(abs(float(c.get("time", 0.0)) - end_time) < 0.1 for c in cues)
                     if not has_immediate_next:
-                        off_transition = min(0.5, float(cue.get("transition", 0.5)))
                         flattened_cues.append({
                             "time": end_time,
                             "entity_id": entity_id,
                             "track_type": track_type,
                             "cue": {
                                 "state": "off",
-                                "transition": off_transition
+                                "transition": cue_fade_out,
+                                "fade_out": cue_fade_out,
                             }
                         })
 
@@ -299,6 +354,7 @@ class LightShowEngine:
                 start_time=start_offset,
             )
 
+        delay_sec = float(self._audio_delay_ms or 0.0) / 1000.0
         t_start = loop.time() - start_offset
         cue_idx = 0
         # Fast-forward cue index if starting with offset
@@ -318,10 +374,11 @@ class LightShowEngine:
 
                 now = loop.time()
                 elapsed = now - t_start
-                self._current_time = elapsed
+                effective_time = elapsed - delay_sec
+                self._current_time = max(0.0, effective_time)
 
-                # Dispatch cues ready at current timestamp
-                while cue_idx < len(flattened_cues) and flattened_cues[cue_idx]["time"] <= elapsed:
+                # Dispatch cues ready at current timestamp (accounting for speaker audio delay)
+                while cue_idx < len(flattened_cues) and flattened_cues[cue_idx]["time"] <= effective_time:
                     item = flattened_cues[cue_idx]
                     self.hass.async_create_task(
                         self._dispatch_cue_to_light(item["entity_id"], item["cue"])
@@ -341,8 +398,8 @@ class LightShowEngine:
                         },
                     )
 
-                # Check if show finished
-                if elapsed >= self._duration:
+                # Check if show finished (accounting for latency delay so audio finishes completely)
+                if effective_time >= self._duration:
                     if self._loop:
                         # Reset for next loop
                         t_start = loop.time()
@@ -370,9 +427,9 @@ class LightShowEngine:
     async def _dispatch_cue_to_light(self, entity_id: str, cue: Dict[str, Any]) -> None:
         """Send command to light entity with appropriate capabilities."""
         action = cue.get("state", "on").lower()
-        transition = float(cue.get("transition", 0.0))
 
         if action == "off":
+            transition = float(cue.get("fade_out", cue.get("transition", 0.0)))
             service_data: Dict[str, Any] = {"entity_id": entity_id}
             if transition > 0:
                 service_data["transition"] = transition
@@ -380,6 +437,7 @@ class LightShowEngine:
             return
 
         # Turn ON / change attributes
+        transition = float(cue.get("fade_in", cue.get("transition", 0.0)))
         service_data = {"entity_id": entity_id}
 
         if transition > 0:

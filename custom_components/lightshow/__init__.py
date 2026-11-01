@@ -14,6 +14,7 @@ from .const import (
     SERVICE_STOP,
     SERVICE_PAUSE,
     SERVICE_RESUME,
+    SERVICE_BLACKOUT,
     CONF_SHOW_ID,
     CONF_PLAYER_ENTITY_ID,
     CONF_LOOP,
@@ -78,17 +79,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         show_id = call.data.get(CONF_SHOW_ID)
         player_entity_id = call.data.get(CONF_PLAYER_ENTITY_ID)
         loop = call.data.get(CONF_LOOP)
+        audio_delay_ms = call.data.get("audio_delay_ms")
         if show_id:
             await engine.async_play(
                 show_id=show_id,
                 player_entity_id=player_entity_id,
                 loop=loop,
+                audio_delay_ms=audio_delay_ms,
             )
         else:
             _LOGGER.error("Service play called without show_id")
 
     async def handle_stop(call: ServiceCall) -> None:
         await engine.async_stop()
+
+    async def handle_blackout(call: ServiceCall) -> None:
+        show_id = call.data.get(CONF_SHOW_ID)
+        entity_ids = call.data.get("entity_ids")
+        await engine.async_blackout(show_id=show_id, entity_ids=entity_ids)
 
     async def handle_pause(call: ServiceCall) -> None:
         await engine.async_pause()
@@ -98,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.services.async_register(DOMAIN, SERVICE_PLAY, handle_play)
     hass.services.async_register(DOMAIN, SERVICE_STOP, handle_stop)
+    hass.services.async_register(DOMAIN, SERVICE_BLACKOUT, handle_blackout)
     hass.services.async_register(DOMAIN, SERVICE_PAUSE, handle_pause)
     hass.services.async_register(DOMAIN, SERVICE_RESUME, handle_resume)
 
@@ -119,6 +128,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.services.async_remove(DOMAIN, SERVICE_PLAY)
     hass.services.async_remove(DOMAIN, SERVICE_STOP)
+    hass.services.async_remove(DOMAIN, SERVICE_BLACKOUT)
     hass.services.async_remove(DOMAIN, SERVICE_PAUSE)
     hass.services.async_remove(DOMAIN, SERVICE_RESUME)
 

@@ -13,6 +13,7 @@ SERVICE_PLAY = "play"
 SERVICE_STOP = "stop"
 SERVICE_PAUSE = "pause"
 SERVICE_RESUME = "resume"
+SERVICE_BLACKOUT = "blackout"
 SERVICE_TEST_CUE = "test_cue"
 
 EVENT_PROGRESS = "lightshow_progress"
