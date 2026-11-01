@@ -19,6 +19,7 @@ class LightShowStudio {
     this.isPlaying = false;
     this.isLooping = false;
     this.selectedCueRef = null; // { trackId, cueIdx }
+    this.clipboardCue = null; // Copied cue for copy-paste operations
     this.mediaHistory = [];
     this.currentMediaItems = [];
     
@@ -110,6 +111,8 @@ class LightShowStudio {
       btnCloseExport: document.getElementById("btn-close-export"),
       exportYamlCode: document.getElementById("export-yaml-code"),
       btnCopyYaml: document.getElementById("btn-copy-yaml"),
+      contextMenu: document.getElementById("daw-context-menu"),
+      toastContainer: document.getElementById("daw-toast-container"),
     };
 
     this.init();
@@ -183,13 +186,16 @@ class LightShowStudio {
       this.seek(targetTime);
     });
 
-    // Synchronize horizontal scrolling between audio timeline and light lanes
-    this.dom.audioTimeline.addEventListener("scroll", () => {
-      const scrollLeft = this.dom.audioTimeline.scrollLeft;
-      document.querySelectorAll(".light-timeline-lane").forEach(lane => {
-        if (lane.scrollLeft !== scrollLeft) lane.scrollLeft = scrollLeft;
-      });
-    });
+    // Full Timeline Horizontal Wheel Scrolling (Intuitive DAW scrolling across lanes)
+    if (this.dom.timelineContainer) {
+      this.dom.timelineContainer.addEventListener("wheel", (e) => {
+        const isHeader = e.target.closest(".track-header");
+        if (!isHeader && (e.deltaY !== 0 && e.deltaX === 0 && !e.ctrlKey)) {
+          this.dom.timelineContainer.scrollLeft += e.deltaY * 0.9;
+          e.preventDefault();
+        }
+      }, { passive: false });
+    }
 
     // Shows CRUD
     this.dom.btnNewShow.addEventListener("click", () => this.handleNewShow());
@@ -374,12 +380,39 @@ class LightShowStudio {
         } else {
           this.play();
         }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c" && !isInput) {
+        if (this.selectedCueRef) {
+          e.preventDefault();
+          const { trackId, cueIdx } = this.selectedCueRef;
+          const track = this.currentShow.tracks.find(t => t.id === trackId);
+          if (track && track.cues[cueIdx]) {
+            this.copyCue(track.cues[cueIdx]);
+          }
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v" && !isInput) {
+        if (this.clipboardCue && !isInput) {
+          e.preventDefault();
+          let targetTrackId = this.selectedCueRef?.trackId;
+          if (!targetTrackId && this.currentShow.tracks.length > 0) {
+            targetTrackId = this.currentShow.tracks[0].id;
+          }
+          if (targetTrackId) {
+            this.pasteCueAt(targetTrackId, this.currentTime);
+          }
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d" && !isInput) {
+        if (this.selectedCueRef) {
+          e.preventDefault();
+          const { trackId, cueIdx } = this.selectedCueRef;
+          this.duplicateCue(trackId, cueIdx);
+        }
       } else if ((e.key === "Delete" || e.key === "Backspace") && !isInput) {
         if (this.selectedCueRef) {
           e.preventDefault();
           this.deleteSelectedCue();
         }
       } else if (e.key === "Escape") {
+        this.hideContextMenu();
         this.deselectCue();
         if (this.dom.cueModal && !this.dom.cueModal.classList.contains("hidden")) this.closeInspector();
         if (this.dom.mediaModal && !this.dom.mediaModal.classList.contains("hidden")) this.dom.mediaModal.classList.add("hidden");
@@ -405,10 +438,22 @@ class LightShowStudio {
       }
     });
 
-    // Deselect cue when clicking on empty workspace
+    // Close Context Menu and deselect cue when clicking on empty workspace
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("#daw-context-menu")) {
+        this.hideContextMenu();
+      }
+    });
+
+    document.addEventListener("contextmenu", (e) => {
+      if (!e.target.closest(".cue-block") && !e.target.closest(".light-timeline-lane")) {
+        this.hideContextMenu();
+      }
+    });
+
     if (this.dom.timelineContainer) {
       this.dom.timelineContainer.addEventListener("click", (e) => {
-        if (!e.target.closest(".cue-block") && !e.target.closest(".track-header") && !e.target.closest(".modal-content")) {
+        if (!e.target.closest(".cue-block") && !e.target.closest(".track-header") && !e.target.closest(".modal-content") && !e.target.closest("#daw-context-menu")) {
           this.deselectCue();
         }
       });
@@ -973,12 +1018,14 @@ class LightShowStudio {
 
   renderTimeline() {
     const totalDuration = this.currentShow.duration || 30.0;
-    const timelineWidth = Math.max(1000, totalDuration * this.zoom);
+    // Extra margin so user can comfortably scroll and position beyond the end of the song
+    const timelineWidth = Math.max(1200, Math.ceil((totalDuration + 6) * this.zoom));
 
     // Set widths of canvas and container
     this.dom.rulerCanvas.width = timelineWidth;
     this.dom.waveformCanvas.width = timelineWidth;
     this.dom.audioTimeline.style.width = `${timelineWidth}px`;
+    this.dom.audioTimeline.style.minWidth = `${timelineWidth}px`;
 
     this.drawRuler(timelineWidth, totalDuration);
     this.drawWaveform(timelineWidth);
@@ -1252,14 +1299,8 @@ class LightShowStudio {
       const lane = document.createElement("div");
       lane.className = "track-timeline light-timeline-lane";
       lane.style.width = `${timelineWidth}px`;
-      lane.scrollLeft = this.dom.audioTimeline ? this.dom.audioTimeline.scrollLeft : 0;
-      lane.title = "Klicken, um an dieser Stelle einen Keyframe (Cue) zu setzen";
-
-      lane.addEventListener("scroll", () => {
-        if (this.dom.audioTimeline && this.dom.audioTimeline.scrollLeft !== lane.scrollLeft) {
-          this.dom.audioTimeline.scrollLeft = lane.scrollLeft;
-        }
-      });
+      lane.style.minWidth = `${timelineWidth}px`;
+      lane.title = "Klicken, um an dieser Stelle einen Keyframe (Cue) zu setzen | Rechtsklick für Menü";
 
       // Click on empty space to add Cue
       lane.addEventListener("click", (e) => {
@@ -1273,7 +1314,21 @@ class LightShowStudio {
         this.addCueToTrack(track.id, time);
       });
 
-      // Render Cues with Dual Handles, Smooth Resizing, Drag & Drop
+      // Right-click on empty space: Lane context menu
+      lane.addEventListener("contextmenu", (e) => {
+        if (e.target.closest(".cue-block")) return;
+        e.preventDefault();
+        const rect = lane.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        let time = clickX / this.zoom;
+        if (this.snap > 0) {
+          time = Math.round(time / this.snap) * this.snap;
+        }
+        time = Math.max(0, parseFloat(time.toFixed(2)));
+        this.showLaneContextMenu(e.clientX, e.clientY, track, time);
+      });
+
+      // Render Cues with Dual Handles, Smooth Resizing, Drag & Drop, and Visual Lamp State
       track.cues.forEach((cue, cueIdx) => {
         const cueEl = document.createElement("div");
         cueEl.className = "cue-block";
@@ -1289,26 +1344,42 @@ class LightShowStudio {
         }
 
         const leftPx = cue.time * this.zoom;
-        const widthPx = Math.max(24, dur * this.zoom);
+        const widthPx = Math.max(26, dur * this.zoom);
         cueEl.style.left = `${leftPx}px`;
         cueEl.style.width = `${widthPx}px`;
 
-        if (cue.state !== "off" && cue.rgb_color) {
-          const [r, g, b] = cue.rgb_color;
-          cueEl.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
-          const lum = (0.299 * r + 0.587 * g + 0.114 * b);
-          cueEl.style.color = lum > 140 ? "#000" : "#fff";
-        }
+        // Apply planned visual lamp state & multicolor styles
+        const vStyle = this.getCueVisualStyle(cue);
+        cueEl.style.background = vStyle.background;
+        cueEl.style.borderColor = vStyle.borderColor;
+        cueEl.style.borderStyle = vStyle.borderStyle;
+        cueEl.style.color = vStyle.textColor;
+        cueEl.style.boxShadow = vStyle.glow;
 
-        const labelText = cue.state === "off" ? "AUS" : (cue.effect || `${Math.round((cue.brightness || 255) / 2.55)}%`);
+        const isOff = cue.state === "off";
+        const swatchHtml = (!isOff && vStyle.baseColor)
+          ? `<span class="cue-swatch-dot" style="background: ${vStyle.baseColor};"></span>`
+          : `<span class="cue-swatch-dot cue-swatch-off"></span>`;
+
         cueEl.innerHTML = `
-          <div class="cue-handle-left" title="Linken Rand ziehen: Startzeit anpassen (Shift für freies Ziehen)"></div>
-          <div class="cue-drag-body" title="Ziehen zum Verschieben | Alt+Ziehen zum Duplizieren | Doppelklick für Optionen">
-            <span class="cue-label">${labelText}</span>
-            <span class="cue-sub">${cue.time.toFixed(2)}s | ${dur.toFixed(1)}s an</span>
+          <div class="cue-handle-left" title="Linken Rand ziehen: Startzeit anpassen (Shift für feines Ziehen)"></div>
+          <div class="cue-drag-body" title="Ziehen zum Verschieben | Rechtsklick für Menü (Löschen, Kopieren, Farben) | Doppelklick für Inspector">
+            <div class="cue-title-row">
+              ${swatchHtml}
+              <span class="cue-label" style="text-shadow: ${vStyle.textShadow}">${vStyle.icon}</span>
+            </div>
+            <span class="cue-sub" style="color: ${vStyle.textColor};">${cue.time.toFixed(2)}s | ${dur.toFixed(1)}s</span>
           </div>
-          <div class="cue-handle-right" title="Rechten Rand ziehen: Dauer anpassen (Shift für freies Ziehen)"></div>
+          <div class="cue-handle-right" title="Rechten Rand ziehen: Dauer anpassen (Shift für feines Ziehen)"></div>
         `;
+
+        // Context menu on right click
+        cueEl.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.selectCue(track.id, cueIdx);
+          this.showCueContextMenu(e.clientX, e.clientY, track, cue, cueIdx);
+        });
 
         // 1. LEFT RESIZE HANDLE (Adjust Start Time & Duration, Keep End Point Fixed)
         const handleLeft = cueEl.querySelector(".cue-handle-left");
@@ -1632,12 +1703,304 @@ class LightShowStudio {
   deleteSelectedCue() {
     if (!this.selectedCueRef) return;
     const { trackId, cueIdx } = this.selectedCueRef;
+    this.deleteCue(trackId, cueIdx);
+  }
+
+  deleteCue(trackId, cueIdx) {
     const track = this.currentShow.tracks.find(t => t.id === trackId);
-    if (track) {
-      track.cues.splice(cueIdx, 1);
-      this.closeInspector();
-      this.renderTimeline();
+    if (!track || !track.cues[cueIdx]) return;
+    track.cues.splice(cueIdx, 1);
+    this.closeInspector();
+    this.deselectCue();
+    this.renderTimeline();
+    this.showToast("🗑️ Segment gelöscht");
+  }
+
+  copyCue(cue) {
+    if (!cue) return;
+    this.clipboardCue = JSON.parse(JSON.stringify(cue));
+    this.showToast("📋 Segment kopiert!");
+  }
+
+  duplicateCue(trackId, cueIdx) {
+    const track = this.currentShow.tracks.find(t => t.id === trackId);
+    if (!track || !track.cues[cueIdx]) return;
+    const origCue = track.cues[cueIdx];
+    const dur = origCue.duration !== undefined ? origCue.duration : 2.0;
+    const cloned = JSON.parse(JSON.stringify(origCue));
+    cloned.time = parseFloat((origCue.time + dur + 0.05).toFixed(2));
+    track.cues.push(cloned);
+    track.cues.sort((a, b) => a.time - b.time);
+    this.selectedCueRef = { trackId, cueIdx: track.cues.indexOf(cloned) };
+    this.renderTimeline();
+    this.showToast("📑 Segment dupliziert!");
+  }
+
+  pasteCueAt(trackId, targetTime) {
+    if (!this.clipboardCue) return;
+    const track = this.currentShow.tracks.find(t => t.id === trackId);
+    if (!track) return;
+    const pasted = JSON.parse(JSON.stringify(this.clipboardCue));
+    pasted.time = Math.max(0, parseFloat(targetTime.toFixed(2)));
+    track.cues.push(pasted);
+    track.cues.sort((a, b) => a.time - b.time);
+    this.selectedCueRef = { trackId, cueIdx: track.cues.indexOf(pasted) };
+    this.renderTimeline();
+    this.showToast("📋 Segment eingefügt!");
+  }
+
+  getCueVisualStyle(cue) {
+    if (cue.state === "off") {
+      return {
+        background: "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
+        borderColor: "rgba(148, 163, 184, 0.4)",
+        borderStyle: "dashed",
+        textColor: "#94a3b8",
+        glow: "none",
+        icon: "⏻ AUS",
+        baseColor: null,
+        textShadow: "none"
+      };
     }
+
+    if (cue.effect) {
+      return {
+        background: "linear-gradient(135deg, #ec4899 0%, #8b5cf6 50%, #06b6d4 100%)",
+        borderColor: "#f43f5e",
+        borderStyle: "solid",
+        textColor: "#ffffff",
+        glow: "0 0 16px rgba(236, 72, 153, 0.45)",
+        icon: `✨ ${cue.effect}`,
+        baseColor: "#ec4899",
+        textShadow: "0 1px 3px rgba(0,0,0,0.9)"
+      };
+    }
+
+    // Planned RGB Lamp Color
+    let r = 255, g = 255, b = 255;
+    if (cue.rgb_color && Array.isArray(cue.rgb_color) && cue.rgb_color.length === 3) {
+      [r, g, b] = cue.rgb_color;
+    } else if (cue.color_temp) {
+      const t = Math.max(0, Math.min(1, (cue.color_temp - 153) / (500 - 153)));
+      r = 255;
+      g = Math.round(220 - t * 60);
+      b = Math.round(255 - t * 205);
+    } else {
+      r = 0; g = 210; b = 255;
+    }
+
+    const brightness = cue.brightness !== undefined ? cue.brightness : 255;
+    const briRatio = Math.max(0.15, brightness / 255);
+    const alpha = (0.35 + 0.65 * briRatio).toFixed(2);
+
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+    const textColor = (lum > 145 && briRatio > 0.4) ? "#070b12" : "#ffffff";
+    const textShadow = (lum > 145 && briRatio > 0.4) ? "none" : "0 1px 3px rgba(0,0,0,0.9)";
+
+    const baseRgb = `rgb(${r}, ${g}, ${b})`;
+    const glowRgb = `rgba(${r}, ${g}, ${b}, ${Math.min(0.65, briRatio * 0.75).toFixed(2)})`;
+    const bgGradient = `linear-gradient(135deg, rgba(${r}, ${g}, ${b}, ${alpha}) 0%, rgba(${Math.round(r * 0.65)}, ${Math.round(g * 0.65)}, ${Math.round(b * 0.65)}, ${alpha}) 100%)`;
+
+    return {
+      background: bgGradient,
+      baseColor: baseRgb,
+      borderColor: `rgba(${r}, ${g}, ${b}, 0.9)`,
+      borderStyle: "solid",
+      textColor,
+      textShadow,
+      glow: `0 3px 14px ${glowRgb}`,
+      icon: `💡 ${Math.round((brightness / 255) * 100)}%`,
+    };
+  }
+
+  showCueContextMenu(x, y, track, cue, cueIdx) {
+    const menu = this.dom.contextMenu;
+    if (!menu) return;
+
+    const dur = cue.duration !== undefined ? cue.duration : 2.0;
+    const vStyle = this.getCueVisualStyle(cue);
+    const isOff = cue.state === "off";
+
+    menu.innerHTML = `
+      <div class="menu-header">
+        <span class="cue-swatch-dot ${isOff ? 'cue-swatch-off' : ''}" style="${vStyle.baseColor ? `background: ${vStyle.baseColor};` : ''}"></span>
+        <span class="menu-title">${track.name}</span>
+        <span class="menu-badge">${cue.time.toFixed(2)}s | ${dur.toFixed(1)}s</span>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-action="edit">
+        <span class="menu-icon">✏️</span>
+        <span class="menu-label">Segment bearbeiten</span>
+        <span class="menu-shortcut">Doppelklick</span>
+      </div>
+      <div class="menu-item" data-action="copy">
+        <span class="menu-icon">📋</span>
+        <span class="menu-label">Kopieren</span>
+        <span class="menu-shortcut">Strg+C</span>
+      </div>
+      <div class="menu-item" data-action="duplicate">
+        <span class="menu-icon">📑</span>
+        <span class="menu-label">Duplizieren</span>
+        <span class="menu-shortcut">Strg+D</span>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-sub-section">
+        <span class="menu-sub-label">Lampenfarbe direkt wählen:</span>
+        <div class="quick-colors-row">
+          <button class="quick-color-btn" style="background: #ffffff;" data-color="255,255,255" title="Weiß"></button>
+          <button class="quick-color-btn" style="background: #ff0055;" data-color="255,0,85" title="Rot/Neonpink"></button>
+          <button class="quick-color-btn" style="background: #ff6600;" data-color="255,102,0" title="Orange"></button>
+          <button class="quick-color-btn" style="background: #ffd000;" data-color="255,208,0" title="Warmes Gelb"></button>
+          <button class="quick-color-btn" style="background: #00ff66;" data-color="0,255,102" title="Grün"></button>
+          <button class="quick-color-btn" style="background: #00d2ff;" data-color="0,210,255" title="Cyan / Eisblau"></button>
+          <button class="quick-color-btn" style="background: #2563eb;" data-color="37,99,235" title="Königsblau"></button>
+          <button class="quick-color-btn" style="background: #a855f7;" data-color="168,85,247" title="Lila / Violett"></button>
+        </div>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-action="toggle-state">
+        <span class="menu-icon">${isOff ? '💡' : '⏻'}</span>
+        <span class="menu-label">${isOff ? 'Lampe einschalten (An)' : 'Lampe ausschalten (Aus)'}</span>
+      </div>
+      <div class="menu-item text-danger" data-action="delete">
+        <span class="menu-icon">🗑️</span>
+        <span class="menu-label">Segment löschen</span>
+        <span class="menu-shortcut">Entf</span>
+      </div>
+    `;
+
+    // Bind actions
+    menu.querySelectorAll(".menu-item").forEach(item => {
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const action = item.dataset.action;
+        if (action === "edit") {
+          this.hideContextMenu();
+          this.openInspector(track.id, cueIdx);
+        } else if (action === "copy") {
+          this.copyCue(cue);
+          this.hideContextMenu();
+        } else if (action === "duplicate") {
+          this.duplicateCue(track.id, cueIdx);
+          this.hideContextMenu();
+        } else if (action === "toggle-state") {
+          cue.state = isOff ? "on" : "off";
+          if (cue.state === "on" && (!cue.rgb_color || cue.rgb_color.length !== 3)) {
+            cue.rgb_color = [255, 0, 100];
+          }
+          this.hideContextMenu();
+          this.renderTimeline();
+          this.showToast(cue.state === "on" ? "💡 Segment auf AN geschaltet" : "⏻ Segment auf AUS geschaltet");
+        } else if (action === "delete") {
+          this.deleteCue(track.id, cueIdx);
+          this.hideContextMenu();
+        }
+      });
+    });
+
+    // Quick colors
+    menu.querySelectorAll(".quick-color-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const rgb = btn.dataset.color.split(",").map(Number);
+        cue.state = "on";
+        cue.rgb_color = rgb;
+        if (!cue.brightness || cue.brightness <= 0) cue.brightness = 255;
+        this.hideContextMenu();
+        this.renderTimeline();
+        this.showToast(`🎨 Farbe geändert: rgb(${rgb.join(",")})`);
+      });
+    });
+
+    this.positionContextMenu(x, y);
+  }
+
+  showLaneContextMenu(x, y, track, clickTime) {
+    const menu = this.dom.contextMenu;
+    if (!menu) return;
+
+    menu.innerHTML = `
+      <div class="menu-header">
+        <span class="menu-icon">💡</span>
+        <span class="menu-title">${track.name}</span>
+        <span class="menu-badge">bei ${clickTime.toFixed(2)}s</span>
+      </div>
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-action="create">
+        <span class="menu-icon">➕</span>
+        <span class="menu-label">Neues Segment hier einfügen</span>
+      </div>
+      ${this.clipboardCue ? `
+      <div class="menu-item" data-action="paste">
+        <span class="menu-icon">📋</span>
+        <span class="menu-label">Kopiertes Segment hier einfügen (${(this.clipboardCue.duration || 2.0).toFixed(1)}s)</span>
+        <span class="menu-shortcut">Strg+V</span>
+      </div>
+      ` : ''}
+      <div class="menu-divider"></div>
+      <div class="menu-item" data-action="seek">
+        <span class="menu-icon">🎯</span>
+        <span class="menu-label">Cursor hierher setzen (${clickTime.toFixed(2)}s)</span>
+      </div>
+    `;
+
+    menu.querySelectorAll(".menu-item").forEach(item => {
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const action = item.dataset.action;
+        if (action === "create") {
+          this.addCueToTrack(track.id, clickTime);
+          this.hideContextMenu();
+        } else if (action === "paste") {
+          this.pasteCueAt(track.id, clickTime);
+          this.hideContextMenu();
+        } else if (action === "seek") {
+          this.seek(clickTime);
+          this.hideContextMenu();
+        }
+      });
+    });
+
+    this.positionContextMenu(x, y);
+  }
+
+  positionContextMenu(x, y) {
+    const menu = this.dom.contextMenu;
+    menu.classList.remove("hidden");
+    const menuWidth = menu.offsetWidth || 230;
+    const menuHeight = menu.offsetHeight || 260;
+
+    let posX = x + 2;
+    let posY = y + 2;
+
+    if (posX + menuWidth > window.innerWidth - 10) {
+      posX = window.innerWidth - menuWidth - 10;
+    }
+    if (posY + menuHeight > window.innerHeight - 10) {
+      posY = window.innerHeight - menuHeight - 10;
+    }
+
+    menu.style.left = `${Math.max(10, posX)}px`;
+    menu.style.top = `${Math.max(10, posY)}px`;
+  }
+
+  hideContextMenu() {
+    if (this.dom.contextMenu) {
+      this.dom.contextMenu.classList.add("hidden");
+    }
+  }
+
+  showToast(message) {
+    const container = this.dom.toastContainer || document.body;
+    const toast = document.createElement("div");
+    toast.className = "daw-toast";
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      toast.style.transform = "translateY(12px)";
+      setTimeout(() => toast.remove(), 300);
+    }, 2200);
   }
 
   async testSelectedCueLive() {
@@ -2160,19 +2523,17 @@ data:
     const x = this.currentTime * this.zoom;
     this.dom.playheadLine.style.transform = `translateX(${x}px)`;
 
-    // Auto-scroll timeline to keep playhead in view
-    const container = this.dom.audioTimeline;
-    if (container) {
-      if (x > container.scrollLeft + container.clientWidth - 100) {
-        container.scrollLeft = x - 100;
-      } else if (x < container.scrollLeft) {
+    // Auto-scroll timeline container during playback to keep playhead in view
+    const container = this.dom.timelineContainer;
+    if (this.isPlaying && container) {
+      const headerWidth = 220;
+      const visibleWidth = container.clientWidth - headerWidth;
+      const currentScroll = container.scrollLeft;
+      if (x > currentScroll + visibleWidth - 80) {
+        container.scrollLeft = x - visibleWidth + 180;
+      } else if (x < currentScroll && currentScroll > 0) {
         container.scrollLeft = Math.max(0, x - 50);
       }
-      // Sync all light track lanes scroll position with audio timeline
-      const scrollPos = container.scrollLeft;
-      document.querySelectorAll(".light-timeline-lane").forEach(lane => {
-        if (lane.scrollLeft !== scrollPos) lane.scrollLeft = scrollPos;
-      });
     }
 
     // Active playing glow on cues currently being played

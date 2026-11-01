@@ -420,13 +420,37 @@ html, body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto; /* Full horizontal timeline scrolling */
   display: flex;
   flex-direction: column;
+  position: relative;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cyan-accent) #1e2638;
+}
+
+.timeline-container::-webkit-scrollbar {
+  width: 8px;
+  height: 10px;
+}
+
+.timeline-container::-webkit-scrollbar-track {
+  background: #111622;
+}
+
+.timeline-container::-webkit-scrollbar-thumb {
+  background: #2a354c;
+  border-radius: 5px;
+  border: 2px solid #111622;
+}
+
+.timeline-container::-webkit-scrollbar-thumb:hover {
+  background: var(--cyan-accent);
 }
 
 .track-row {
   display: flex;
+  width: max-content;
+  min-width: 100%;
   border-bottom: 1px solid var(--border-color);
   min-height: 80px;
   position: relative;
@@ -442,17 +466,16 @@ html, body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  z-index: 10;
+  z-index: 25;
   position: sticky;
   left: 0;
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.45);
 }
 
 .track-timeline {
-  flex: 1;
   position: relative;
   background: var(--bg-main);
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: visible;
   height: 100%;
 }
 
@@ -747,8 +770,208 @@ html, body {
 }
 
 .cue-sub {
-  font-size: 9px;
-  opacity: 0.85;
+  font-size: 9.5px;
+  font-family: 'JetBrains Mono', monospace;
+  opacity: 0.9;
+  letter-spacing: -0.2px;
+}
+
+.cue-title-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.cue-swatch-dot {
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+  flex-shrink: 0;
+}
+
+.cue-swatch-off {
+  background: #475569 !important;
+  border-color: #64748b !important;
+}
+
+/* DAW Context Menu */
+.daw-context-menu {
+  position: fixed;
+  z-index: 10500;
+  min-width: 220px;
+  max-width: 280px;
+  background: rgba(15, 21, 35, 0.96);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 1px rgba(255, 255, 255, 0.25);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  color: #f1f5f9;
+  animation: contextMenuPop 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes contextMenuPop {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.daw-context-menu.hidden {
+  display: none !important;
+}
+
+.daw-context-menu .menu-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.daw-context-menu .menu-header .menu-title {
+  flex: 1;
+  color: #f8fafc;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.daw-context-menu .menu-header .menu-badge {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--cyan-accent);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+
+.daw-context-menu .menu-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 4px 0;
+}
+
+.daw-context-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+  user-select: none;
+}
+
+.daw-context-menu .menu-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.daw-context-menu .menu-item.text-danger {
+  color: #f87171;
+}
+
+.daw-context-menu .menu-item.text-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.daw-context-menu .menu-item .menu-icon {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
+}
+
+.daw-context-menu .menu-item .menu-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.daw-context-menu .menu-item .menu-shortcut {
+  font-size: 10px;
+  color: #64748b;
+  font-family: 'JetBrains Mono', monospace;
+  margin-left: 10px;
+}
+
+.daw-context-menu .menu-sub-section {
+  padding: 6px 8px 4px 8px;
+}
+
+.daw-context-menu .menu-sub-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #94a3b8;
+  display: block;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.daw-context-menu .quick-colors-row {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+}
+
+.daw-context-menu .quick-color-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.daw-context-menu .quick-color-btn:hover {
+  transform: scale(1.3);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+  border-color: #ffffff;
+}
+
+/* Toast Notifications */
+.daw-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--cyan-accent);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 12px rgba(0, 212, 255, 0.35);
+  z-index: 11000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  animation: toastSlideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+@keyframes toastSlideUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Floating Live Drag & Resize Tooltip HUD */
