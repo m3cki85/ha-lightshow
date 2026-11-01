@@ -116,6 +116,9 @@ class LightShowStudio {
       btnTestLampLive: document.getElementById("btn-test-lamp-live"),
       lampNameInput: document.getElementById("lamp-name-input"),
       lampEntityDisplay: document.getElementById("lamp-entity-display"),
+      lampProtoBadge: document.getElementById("lamp-proto-badge"),
+      lampProtoMeta: document.getElementById("lamp-proto-meta"),
+      lampZigbeeAdvice: document.getElementById("lamp-zigbee-advice"),
       lampFadeInInput: document.getElementById("lamp-fade-in-input"),
       lampFadeOutInput: document.getElementById("lamp-fade-out-input"),
       lampApplyExistingCues: document.getElementById("lamp-apply-existing-cues"),
@@ -1472,6 +1475,30 @@ class LightShowStudio {
     document.querySelectorAll(".cue-block.selected").forEach(el => el.classList.remove("selected"));
   }
 
+  getProtocolBadgeClass(protocol) {
+    switch (protocol) {
+      case "zigbee": return "badge-zigbee";
+      case "wled": return "badge-wled";
+      case "wifi": return "badge-wifi";
+      case "matter": return "badge-matter";
+      case "group": return "badge-group";
+      case "ble": return "badge-ble";
+      default: return "badge-other";
+    }
+  }
+
+  getProtocolIcon(protocol) {
+    switch (protocol) {
+      case "zigbee": return "🔵";
+      case "wled": return "🟣";
+      case "wifi": return "🟢";
+      case "matter": return "⚡";
+      case "group": return "🟡";
+      case "ble": return "📶";
+      default: return "💡";
+    }
+  }
+
   renderLightTracks(timelineWidth) {
     this.dom.lightTracksList.innerHTML = "";
 
@@ -1498,9 +1525,21 @@ class LightShowStudio {
       const header = document.createElement("div");
       header.className = "track-header";
       
-      const isWled = track.type === "wled";
+      const lightInfo = this.lights.find(l => l.entity_id === track.entity_id);
+      const isWled = track.type === "wled" || lightInfo?.is_wled;
+      const protocol = lightInfo?.protocol || track.protocol || (isWled ? "wled" : "other");
+      const protocolLabel = lightInfo?.protocol_label || track.protocol_label || (isWled ? "WLED Strip" : "Standard");
+      const badgeClass = this.getProtocolBadgeClass(protocol);
+      const badgeIcon = this.getProtocolIcon(protocol);
       const defaultFadeIn = track.default_fade_in !== undefined ? track.default_fade_in : 0.0;
       const defaultFadeOut = track.default_fade_out !== undefined ? track.default_fade_out : 0.5;
+
+      const deviceTooltip = [
+        protocolLabel,
+        lightInfo?.manufacturer || track.manufacturer,
+        lightInfo?.model || track.model,
+        track.entity_id
+      ].filter(Boolean).join(" • ");
 
       header.innerHTML = `
         <div>
@@ -1510,12 +1549,12 @@ class LightShowStudio {
               <span class="track-name" title="${track.name}">${track.name}</span>
             </div>
             <div class="track-actions-top">
-              <button class="btn-track-settings" data-action="settings" title="Lampen-Einstellungen öffnen (Fade In / Out Zeiten separat, Name)">⚙️</button>
+              <button class="btn-track-settings" data-action="settings" title="Lampen-Einstellungen öffnen (Fade In / Out Zeiten separat, Name, Protokoll)">⚙️</button>
               <button class="btn btn-micro btn-danger" title="Spur entfernen" data-action="del-track">✕</button>
             </div>
           </div>
           <div class="track-sub-row">
-            <span class="badge ${isWled ? 'badge-wled' : 'badge-zigbee'}">${isWled ? 'WLED' : 'Standard'}</span>
+            <span class="badge ${badgeClass}" title="${deviceTooltip}">${badgeIcon} ${protocolLabel}</span>
             <button class="badge-fade-btn" data-action="settings" title="Klicken für separate Fade In/Out Einstellungen dieser Lampe">
               ↗ ${Number(defaultFadeIn).toFixed(1)}s | ↘ ${Number(defaultFadeOut).toFixed(1)}s
             </button>
@@ -2367,6 +2406,31 @@ class LightShowStudio {
     if (this.dom.lampFadeOutInput) this.dom.lampFadeOutInput.value = track.default_fade_out !== undefined ? track.default_fade_out : 0.5;
     if (this.dom.lampApplyExistingCues) this.dom.lampApplyExistingCues.checked = false;
 
+    // Protocol & Device info
+    const lightInfo = this.lights.find(l => l.entity_id === track.entity_id);
+    const protocol = lightInfo?.protocol || track.protocol || (track.type === "wled" ? "wled" : "other");
+    const protocolLabel = lightInfo?.protocol_label || track.protocol_label || (track.type === "wled" ? "WLED Strip" : "Standard");
+    const badgeClass = this.getProtocolBadgeClass(protocol);
+    const badgeIcon = this.getProtocolIcon(protocol);
+
+    if (this.dom.lampProtoBadge) {
+      this.dom.lampProtoBadge.className = `badge ${badgeClass}`;
+      this.dom.lampProtoBadge.textContent = `${badgeIcon} ${protocolLabel}`;
+    }
+
+    if (this.dom.lampProtoMeta) {
+      const meta = [
+        lightInfo?.manufacturer || track.manufacturer,
+        lightInfo?.model || track.model,
+        lightInfo?.platform ? `Integration: ${lightInfo.platform}` : null
+      ].filter(Boolean).join(" • ");
+      this.dom.lampProtoMeta.textContent = meta || `Entity: ${track.entity_id}`;
+    }
+
+    if (this.dom.lampZigbeeAdvice) {
+      this.dom.lampZigbeeAdvice.classList.toggle("hidden", protocol !== "zigbee");
+    }
+
     if (this.dom.lampModal) {
       this.dom.lampModal.classList.remove("hidden");
     }
@@ -2450,19 +2514,36 @@ class LightShowStudio {
     const activeEntityIds = new Set(this.currentShow.tracks.map(t => t.entity_id));
 
     this.lights
-      .filter(l => l.name.toLowerCase().includes(q) || l.entity_id.toLowerCase().includes(q))
+      .filter(l => (
+        l.name.toLowerCase().includes(q) ||
+        l.entity_id.toLowerCase().includes(q) ||
+        (l.manufacturer && l.manufacturer.toLowerCase().includes(q)) ||
+        (l.model && l.model.toLowerCase().includes(q)) ||
+        (l.protocol_label && l.protocol_label.toLowerCase().includes(q))
+      ))
       .forEach(l => {
         const isAdded = activeEntityIds.has(l.entity_id);
         const row = document.createElement("div");
         row.className = "item-row";
+
+        const badgeClass = this.getProtocolBadgeClass(l.protocol);
+        const badgeIcon = this.getProtocolIcon(l.protocol);
+        const badgeLabel = l.protocol_label || (l.is_wled ? "WLED Strip" : "Lampe");
+
+        const metaParts = [];
+        if (l.manufacturer) metaParts.push(l.manufacturer);
+        if (l.model) metaParts.push(l.model);
+        metaParts.push(l.entity_id);
+        const metaStr = metaParts.join(" • ");
+
         row.innerHTML = `
           <div>
             <strong>${l.name}</strong>
-            <div style="font-size:11px; color:#94a3b8">${l.entity_id}</div>
+            <div style="font-size:11px; color:#94a3b8">${metaStr}</div>
           </div>
-          <div>
-            <span class="badge ${l.is_wled ? 'badge-wled' : 'badge-zigbee'}">${l.is_wled ? 'WLED Strip' : 'Lampe'}</span>
-            ${isAdded ? '<span style="font-size:12px; margin-left:8px; color:#10b981">✓ In Show</span>' : ''}
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="badge ${badgeClass}">${badgeIcon} ${badgeLabel}</span>
+            ${isAdded ? '<span style="font-size:12px; color:#10b981; font-weight:600;">✓ In Show</span>' : ''}
           </div>
         `;
 
@@ -2484,18 +2565,28 @@ class LightShowStudio {
       entity_id: light.entity_id,
       name: light.name,
       type: light.is_wled ? "wled" : "standard",
+      protocol: light.protocol || (light.is_wled ? "wled" : "other"),
+      protocol_label: light.protocol_label || (light.is_wled ? "WLED Strip" : "Standard"),
+      platform: light.platform || "",
+      manufacturer: light.manufacturer || "",
+      model: light.model || "",
+      default_fade_in: 0.0,
+      default_fade_out: 0.5,
       cues: [
         {
           time: 0.0,
           state: "on",
           brightness: 255,
           rgb_color: [255, 200, 100],
-          transition: light.is_wled ? 0.0 : 1.0,
+          transition: light.is_wled ? 0.0 : 0.5,
+          fade_in: 0.0,
+          fade_out: 0.5,
         }
       ]
     };
     this.currentShow.tracks.push(newTrack);
     this.renderTimeline();
+    this.showToast(`💡 Spur '${light.name}' (${newTrack.protocol_label}) hinzugefügt`);
   }
 
   // --- AUDIO & PROJECT SAVE / LOAD ---

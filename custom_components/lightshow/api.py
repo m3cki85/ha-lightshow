@@ -99,6 +99,120 @@ class LightShowShowDetailView(LightShowBaseView):
         return self.json({"success": deleted})
 
 
+def detect_light_protocol(
+    entity_id: str,
+    attrs: dict,
+    entry: any,
+    device: any,
+) -> tuple[str, str, str | None, str | None]:
+    """
+    Detect light protocol, label, manufacturer, and model.
+    Returns: (protocol_key, protocol_label, manufacturer, model)
+    protocol_key in: ('zigbee', 'wifi', 'wled', 'matter', 'group', 'ble', 'other')
+    """
+    platform = (getattr(entry, "platform", None) or "").lower() if entry else ""
+    ent_id_lower = entity_id.lower()
+    friendly_name = str(attrs.get("friendly_name", "")).lower()
+    effect_list = attrs.get("effect_list") or []
+
+    manufacturer = getattr(device, "manufacturer", None) if device else None
+    model = getattr(device, "model", None) if device else None
+    man_lower = (manufacturer or "").lower()
+    mod_lower = (model or "").lower()
+
+    # 1. WLED detection (highest priority for lighting effects)
+    if platform == "wled" or "wled" in ent_id_lower or "wled" in friendly_name or len(effect_list) > 10:
+        return "wled", "WLED Strip (Wi-Fi)", manufacturer or "WLED", model or "RGB Addressable"
+
+    # 2. Groups (Zigbee multicast group or HA light group)
+    if platform in ("group", "light_group") or "entity_id" in attrs or "group" in ent_id_lower:
+        if "zha" in ent_id_lower or "zigbee" in ent_id_lower or "z2m" in ent_id_lower:
+            return "group", "Zigbee-Gruppe", "Zigbee", "Multicast Gruppe"
+        return "group", "Licht-Gruppe", "Home Assistant", "Lichtgruppe"
+
+    # 3. Zigbee (ZHA, deCONZ, Philips Hue Bridge, Zigbee2MQTT)
+    is_zigbee = False
+    zigbee_flavor = "Zigbee"
+
+    if platform == "zha":
+        is_zigbee = True
+        zigbee_flavor = "Zigbee (ZHA)"
+    elif platform == "deconz":
+        is_zigbee = True
+        zigbee_flavor = "Zigbee (deCONZ)"
+    elif platform == "hue":
+        is_zigbee = True
+        zigbee_flavor = "Zigbee (Hue)"
+    elif platform == "mqtt":
+        if (
+            "zigbee" in ent_id_lower
+            or "z2m" in ent_id_lower
+            or "zigbee2mqtt" in mod_lower
+            or "zigbee2mqtt" in man_lower
+            or "0x" in ent_id_lower
+        ):
+            is_zigbee = True
+            zigbee_flavor = "Zigbee (Z2M)"
+
+    if not is_zigbee:
+        known_zigbee_brands = (
+            "philips", "hue", "signify", "ikea", "tradfri", "innr",
+            "aqara", "osram", "ledvance", "tint", "muller-licht", "sonoff"
+        )
+        if any(b in man_lower for b in known_zigbee_brands):
+            if platform in ("zha", "deconz", "hue", "mqtt") or not platform:
+                is_zigbee = True
+                brand_title = manufacturer.split()[0] if manufacturer else "Zigbee"
+                zigbee_flavor = f"Zigbee ({brand_title})"
+
+    if is_zigbee:
+        return "zigbee", zigbee_flavor, manufacturer, model
+
+    # 4. Matter / Thread
+    if platform in ("matter", "thread") or "matter" in mod_lower or "matter" in man_lower:
+        return "matter", "Matter / Thread", manufacturer, model
+
+    # 5. Wi-Fi / LAN integrations
+    wifi_platforms = {
+        "esphome": "Wi-Fi (ESPHome)",
+        "shelly": "Wi-Fi (Shelly)",
+        "tasmota": "Wi-Fi (Tasmota)",
+        "wiz": "Wi-Fi (WiZ)",
+        "lifx": "Wi-Fi (LIFX)",
+        "yeelight": "Wi-Fi (Yeelight)",
+        "tuya": "Wi-Fi (Tuya)",
+        "smartlife": "Wi-Fi (Tuya)",
+        "govee": "Wi-Fi (Govee)",
+        "nanoleaf": "Wi-Fi (Nanoleaf)",
+        "kasa": "Wi-Fi (TP-Link Kasa)",
+        "tplink": "Wi-Fi (TP-Link)",
+        "meross": "Wi-Fi (Meross)",
+        "lutron": "Lutron",
+        "knx": "KNX Bus",
+        "homematic": "Homematic",
+        "homematicip": "Homematic IP",
+    }
+    if platform in wifi_platforms:
+        return "wifi", wifi_platforms[platform], manufacturer, model
+
+    # 6. Bluetooth / BLE
+    if platform in ("bluetooth", "ble", "shelly_ble") or "ble" in mod_lower:
+        return "ble", "Bluetooth (BLE)", manufacturer, model
+
+    # 7. Check connection types in Device Registry (MAC -> Wi-Fi, Zigbee IEEE -> Zigbee)
+    if device and getattr(device, "connections", None):
+        conn_types = [str(c[0]).lower() for c in device.connections]
+        if "mac" in conn_types:
+            plat_name = platform.title() if platform else "Wi-Fi"
+            return "wifi", f"Wi-Fi ({plat_name})", manufacturer, model
+        if "zigbee" in conn_types:
+            return "zigbee", "Zigbee", manufacturer, model
+
+    # 8. Fallback
+    label = platform.title() if platform else "Standard"
+    return "other", label, manufacturer, model
+
+
 class LightShowLightsView(LightShowBaseView):
     """List all light entities and their capabilities."""
     url = f"{API_URL_PREFIX}/lights"
@@ -109,20 +223,30 @@ class LightShowLightsView(LightShowBaseView):
 
     async def get(self, request: web.Request) -> web.Response:
         lights = []
+        ent_reg = None
+        dev_reg = None
+        try:
+            from homeassistant.helpers import entity_registry as er, device_registry as dr
+            ent_reg = er.async_get(self.hass)
+            dev_reg = dr.async_get(self.hass)
+        except Exception as e:
+            _LOGGER.debug("Could not access HA registries: %s", e)
+
         for state in self.hass.states.async_all("light"):
             attrs = state.attributes
             entity_id = state.entity_id
 
-            # Determine capabilities
+            entry = ent_reg.async_get(entity_id) if ent_reg else None
+            device = dev_reg.async_get(entry.device_id) if (dev_reg and entry and entry.device_id) else None
+
             color_modes = attrs.get("supported_color_modes") or []
             effect_list = attrs.get("effect_list") or []
 
-            # Check if it's WLED
-            is_wled = (
-                "wled" in entity_id.lower()
-                or "wled" in str(attrs.get("friendly_name", "")).lower()
-                or len(effect_list) > 10
+            protocol, protocol_label, manufacturer, model = detect_light_protocol(
+                entity_id, attrs, entry, device
             )
+
+            is_wled = (protocol == "wled")
 
             lights.append({
                 "entity_id": entity_id,
@@ -131,6 +255,11 @@ class LightShowLightsView(LightShowBaseView):
                 "color_modes": color_modes,
                 "effect_list": effect_list,
                 "is_wled": is_wled,
+                "protocol": protocol,
+                "protocol_label": protocol_label,
+                "platform": getattr(entry, "platform", None) if entry else None,
+                "manufacturer": manufacturer,
+                "model": model,
                 "current_brightness": attrs.get("brightness"),
                 "current_rgb": attrs.get("rgb_color"),
                 "current_effect": attrs.get("effect"),

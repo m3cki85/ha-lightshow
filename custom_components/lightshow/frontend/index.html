@@ -280,6 +280,18 @@
           <button id="btn-close-lamp-settings" class="modal-close">&times;</button>
         </div>
         <div class="modal-body">
+          <!-- Protocol & Device Info -->
+          <div class="lamp-proto-card" id="lamp-proto-card">
+            <div class="lamp-proto-info">
+              <span style="font-weight:600; font-size:12px;" id="lamp-proto-title">Erkanntes Protokoll:</span>
+              <span class="lamp-proto-meta" id="lamp-proto-meta">Integration: - • Gerät: -</span>
+            </div>
+            <span id="lamp-proto-badge" class="badge badge-zigbee">Zigbee</span>
+          </div>
+          <div id="lamp-zigbee-advice" class="lamp-zigbee-advice hidden">
+            💡 <strong>Zigbee-Tipp:</strong> Für zuverlässige Flashes wird eine Mindestdauer von <strong>100–150 ms (0,15s)</strong> empfohlen. Wenn viele Lampen gleichzeitig schalten sollen, empfiehlt sich eine Zigbee-Gruppe.
+          </div>
+
           <div class="form-row">
             <label>Name der Lampe / Spur:</label>
             <input type="text" id="lamp-name-input" class="text-input" placeholder="Lampenname...">
