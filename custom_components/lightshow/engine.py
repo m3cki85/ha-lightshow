@@ -178,22 +178,20 @@ class LightShowEngine:
         if self._state == "paused":
             self._set_state("playing")
             self._pause_event.set()
-            if self._player_entity_id and self._current_show:
-                audio = self._current_show.get("audio", {})
-                media_id = audio.get("mass_uri") or audio.get("stream_url")
-                track_title = audio.get("title") or audio.get("filename")
-                await self.mass.async_play_media(self._player_entity_id, media_id, track_title=track_title)
+            if self._player_entity_id:
+                await self.mass.async_resume_media(self._player_entity_id)
 
     async def async_seek(self, time_pos: float) -> None:
         """Seek playback position in seconds."""
         time_pos = max(0.0, min(self._duration or 3600.0, time_pos))
         self._current_time = time_pos
 
-        if self._player_entity_id:
-            await self.mass.async_seek_media(self._player_entity_id, time_pos)
-
-        # If currently playing, restart the playback loop from the new position
+        # Only send seek command to Music Assistant player and restart loop if actively playing!
+        # Seeking while stopped or paused in Music Assistant can cause it to wake up or resume prematurely.
         if self._state == "playing":
+            if self._player_entity_id:
+                await self.mass.async_seek_media(self._player_entity_id, time_pos)
+
             if self._task and not self._task.done():
                 self._task.cancel()
                 try:

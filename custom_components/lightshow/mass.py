@@ -414,6 +414,36 @@ class MusicAssistantHelper:
         players.sort(key=lambda p: (not p["is_mass"], p["name"].lower()))
         return players
 
+    def _resolve_queue_id(self, client: Any, player_entity_id: str) -> str:
+        """Resolve Home Assistant entity ID or player ID to a Music Assistant queue ID."""
+        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+        if not client:
+            return clean_id
+
+        players_ctrl = getattr(client, "players", None)
+        if players_ctrl:
+            raw_players = []
+            if hasattr(players_ctrl, "all") and callable(players_ctrl.all):
+                raw_players = list(players_ctrl.all())
+            elif hasattr(players_ctrl, "players"):
+                p_dict = players_ctrl.players
+                raw_players = list(p_dict.values()) if isinstance(p_dict, dict) else list(p_dict)
+            elif isinstance(players_ctrl, dict):
+                raw_players = list(players_ctrl.values())
+            elif hasattr(players_ctrl, "__iter__"):
+                try:
+                    raw_players = list(players_ctrl)
+                except Exception:
+                    pass
+
+            for p in raw_players:
+                p_id = str(getattr(p, "player_id", "") or "")
+                disp = str(getattr(p, "display_name", "") or getattr(p, "name", "")).lower()
+                if p_id == clean_id or disp == clean_id.lower() or f"media_player.mass_{p_id}" == player_entity_id:
+                    return getattr(p, "active_source", None) or p_id
+
+        return clean_id
+
     async def async_play_media(
         self,
         player_entity_id: str,
@@ -471,33 +501,7 @@ class MusicAssistantHelper:
         client = self._get_mass_client()
         if client and hasattr(client, "player_queues") and hasattr(client.player_queues, "play_media"):
             try:
-                queue_id = None
-                clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
-                players_ctrl = getattr(client, "players", None)
-                if players_ctrl:
-                    raw_players = []
-                    if hasattr(players_ctrl, "all") and callable(players_ctrl.all):
-                        raw_players = list(players_ctrl.all())
-                    elif hasattr(players_ctrl, "players"):
-                        p_dict = players_ctrl.players
-                        raw_players = list(p_dict.values()) if isinstance(p_dict, dict) else list(p_dict)
-                    elif isinstance(players_ctrl, dict):
-                        raw_players = list(players_ctrl.values())
-                    elif hasattr(players_ctrl, "__iter__"):
-                        try:
-                            raw_players = list(players_ctrl)
-                        except Exception:
-                            pass
-
-                    for p in raw_players:
-                        p_id = str(getattr(p, "player_id", "") or "")
-                        disp = str(getattr(p, "display_name", "") or getattr(p, "name", "")).lower()
-                        if p_id == clean_id or disp == clean_id.lower() or f"media_player.mass_{p_id}" == player_entity_id:
-                            queue_id = getattr(p, "active_source", None) or p_id
-                            break
-
-                if not queue_id:
-                    queue_id = clean_id
+                queue_id = self._resolve_queue_id(client, player_entity_id)
 
                 if play_target:
                     await client.player_queues.play_media(
@@ -612,13 +616,14 @@ class MusicAssistantHelper:
     async def async_stop_media(self, player_entity_id: str) -> bool:
         """Stop playback on player."""
         client = self._get_mass_client()
-        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+        queue_id = self._resolve_queue_id(client, player_entity_id)
         if client and hasattr(client, "player_queues") and hasattr(client.player_queues, "stop"):
             try:
-                await client.player_queues.stop(clean_id)
+                await client.player_queues.stop(queue_id)
+                _LOGGER.info("Direct client.player_queues.stop succeeded for %s", queue_id)
                 return True
-            except Exception:
-                pass
+            except Exception as err:
+                _LOGGER.debug("Direct client stop failed: %s", err)
 
         for s_domain in ("music_assistant", "mass"):
             if self.hass.services.has_service(s_domain, "stop"):
@@ -648,13 +653,14 @@ class MusicAssistantHelper:
     async def async_pause_media(self, player_entity_id: str) -> bool:
         """Pause playback on player."""
         client = self._get_mass_client()
-        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
+        queue_id = self._resolve_queue_id(client, player_entity_id)
         if client and hasattr(client, "player_queues") and hasattr(client.player_queues, "pause"):
             try:
-                await client.player_queues.pause(clean_id)
+                await client.player_queues.pause(queue_id)
+                _LOGGER.info("Direct client.player_queues.pause succeeded for %s", queue_id)
                 return True
-            except Exception:
-                pass
+            except Exception as err:
+                _LOGGER.debug("Direct client pause failed: %s", err)
 
         for s_domain in ("music_assistant", "mass"):
             if self.hass.services.has_service(s_domain, "pause"):
@@ -681,24 +687,66 @@ class MusicAssistantHelper:
             _LOGGER.warning("Failed to pause media on %s: %s", player_entity_id, err)
             return False
 
+    async def async_resume_media(self, player_entity_id: str) -> bool:
+        """Resume playback on player."""
+        client = self._get_mass_client()
+        queue_id = self._resolve_queue_id(client, player_entity_id)
+        if client and hasattr(client, "player_queues"):
+            try:
+                if hasattr(client.player_queues, "resume"):
+                    await client.player_queues.resume(queue_id)
+                    _LOGGER.info("Direct client.player_queues.resume succeeded for %s", queue_id)
+                    return True
+                elif hasattr(client.player_queues, "play"):
+                    await client.player_queues.play(queue_id)
+                    _LOGGER.info("Direct client.player_queues.play succeeded for %s", queue_id)
+                    return True
+            except Exception as err:
+                _LOGGER.debug("Direct client resume failed: %s", err)
+
+        for s_domain in ("music_assistant", "mass"):
+            if self.hass.services.has_service(s_domain, "play_pause"):
+                try:
+                    await self.hass.services.async_call(
+                        s_domain,
+                        "play_pause",
+                        target={"entity_id": player_entity_id},
+                        blocking=False,
+                    )
+                    return True
+                except Exception:
+                    pass
+
+        try:
+            await self.hass.services.async_call(
+                "media_player",
+                "media_play",
+                target={"entity_id": player_entity_id},
+                blocking=False,
+            )
+            return True
+        except Exception as err:
+            _LOGGER.warning("Failed to resume media on %s: %s", player_entity_id, err)
+            return False
+
     async def async_seek_media(self, player_entity_id: str, position: float) -> bool:
         """Seek media player or Music Assistant queue to specific position in seconds."""
         if not player_entity_id:
             return False
 
-        clean_id = player_entity_id.replace("media_player.mass_", "").replace("media_player.", "")
         client = self._get_mass_client()
+        queue_id = self._resolve_queue_id(client, player_entity_id)
 
         # 1. Direct Music Assistant client call
         if client and hasattr(client, "player_queues"):
             try:
                 q_ctrl = client.player_queues
                 if hasattr(q_ctrl, "seek"):
-                    await q_ctrl.seek(clean_id, int(position))
-                    _LOGGER.info("Direct client.player_queues.seek succeeded for %s at %.1fs", clean_id, position)
+                    await q_ctrl.seek(queue_id, int(position))
+                    _LOGGER.info("Direct client.player_queues.seek succeeded for %s at %.1fs", queue_id, position)
                     return True
                 elif hasattr(q_ctrl, "seek_media"):
-                    await q_ctrl.seek_media(clean_id, int(position))
+                    await q_ctrl.seek_media(queue_id, int(position))
                     return True
             except Exception as client_err:
                 _LOGGER.debug("Direct client seek failed: %s", client_err)

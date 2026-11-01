@@ -1989,12 +1989,15 @@ data:
     this.currentShow.settings.default_player_entity_id = selectedPlayer;
     this.currentShow.settings.loop = this.isLooping;
 
-    // Start playback through Music Assistant engine
+    // Start or resume playback through Music Assistant engine
     try {
+      const isQuickResume = this.isPaused && Math.abs(this.currentTime - (this.pausedAtTime || 0)) < 0.2;
       const res = await fetch(`${this.apiBase}/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(isQuickResume ? {
+          action: "resume"
+        } : {
           action: "play",
           show_id: this.currentShow.id,
           show_data: this.currentShow,
@@ -2020,6 +2023,7 @@ data:
     }
 
     this.isPlaying = true;
+    this.isPaused = false;
     this.dom.btnPlay.style.display = "none";
     this.dom.btnPause.style.display = "flex";
     this.lastTickTime = performance.now();
@@ -2029,6 +2033,8 @@ data:
   async pause() {
     if (!this.isPlaying) return;
     this.isPlaying = false;
+    this.isPaused = true;
+    this.pausedAtTime = this.currentTime;
     this.dom.btnPlay.style.display = "flex";
     this.dom.btnPause.style.display = "none";
 
@@ -2050,6 +2056,7 @@ data:
 
   async stop() {
     this.isPlaying = false;
+    this.isPaused = false;
     this.dom.btnPlay.style.display = "flex";
     this.dom.btnPause.style.display = "none";
 
@@ -2070,25 +2077,36 @@ data:
     }
 
     if (this.animFrameId) cancelAnimationFrame(this.animFrameId);
-    this.seek(0);
+
+    // Cleanly reset local UI timeline without sending seek to backend!
+    this.currentTime = 0;
+    this.updatePlayheadPosition();
+    this.updateTimeDisplay();
   }
 
   async seek(targetTime) {
     this.currentTime = Math.max(0, Math.min(targetTime, this.currentShow.duration || 60));
+    if (this.isPaused) {
+      this.pausedAtTime = this.currentTime;
+    }
     if (this.dom.audioPlayer && this.dom.audioPlayer.src) {
       try { this.dom.audioPlayer.currentTime = this.currentTime; } catch (e) {}
     }
     this.updatePlayheadPosition();
     this.updateTimeDisplay();
 
-    // Send seek to backend Music Assistant engine
-    try {
-      await fetch(`${this.apiBase}/control`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "seek", time: this.currentTime }),
-      });
-    } catch (e) {}
+    // Only send seek command to backend while actively playing!
+    // When paused or stopped, seeking only moves the timeline cursor.
+    // When the user hits Play, play() will pass start_time: this.currentTime!
+    if (this.isPlaying) {
+      try {
+        await fetch(`${this.apiBase}/control`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "seek", time: this.currentTime }),
+        });
+      } catch (e) {}
+    }
   }
 
   runPlaybackLoop() {
